@@ -17190,6 +17190,10 @@
     "description": "InterfaceSlirp connects to a given network using QEMU user networking mode.",
     "type": "object"
    },
+   "v1.InterfaceVhostuser": {
+    "description": "InterfaceVhostuser connects to a given network using vHostUser socket.",
+    "type": "object"
+   },
    "v1.KSMConfiguration": {
     "description": "KSMConfiguration holds information about KSM.",
     "type": "object",
@@ -17675,6 +17679,9 @@
      },
      "targetKubeVirtVersion": {
       "type": "string"
+     },
+     "vhostuser": {
+      "$ref": "#/definitions/v1.InterfaceVhostuser"
      }
     }
    },
