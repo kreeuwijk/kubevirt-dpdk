@@ -2669,10 +2669,10 @@ func validateCPUHotplug(field *k8sfield.Path, spec *v1.VirtualMachineInstanceSpe
 				Type:    metav1.CauseTypeFieldValueInvalid,
 				Message: fmt.Sprintf("Number of sockets in CPU topology is greater than the maximum sockets allowed"),
 				Field:   field.Child("domain", "cpu", "sockets").String(),
-                        })
-                }
-        }
-        return causes
+			})
+		}
+	}
+	return causes
 }
 
 func validateVhostuserSpec(field *k8sfield.Path, spec *v1.VirtualMachineInstanceSpec) (causes []metav1.StatusCause) {

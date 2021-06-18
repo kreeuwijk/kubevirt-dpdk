@@ -31,8 +31,12 @@ import (
 
 	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/converter/vcpu"
 
+	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+
 	"kubevirt.io/kubevirt/pkg/network/dns"
+	"kubevirt.io/kubevirt/pkg/network/namescheme"
 	netvmispec "kubevirt.io/kubevirt/pkg/network/vmispec"
+	"kubevirt.io/kubevirt/pkg/virt-controller/services"
 	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/api"
 	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/device"
 )
@@ -130,6 +134,36 @@ func CreateDomainInterfaces(vmi *v1.VirtualMachineInstance, domain *api.Domain, 
 			}
 		} else if iface.Passt != nil {
 			domain.Spec.Devices.Emulator = "/usr/bin/qrap"
+		} else if iface.Vhostuser != nil {
+			domainIface.Type = "vhostuser"
+			podInterfaceName, err := getPodInterfaceName(vmi, iface.Name)
+			if err != nil {
+				log.Log.Errorf("Failed to get NIC for vhostuser interface: %s", iface.Name)
+			}
+			vhostPath, vhostMode, err := getVhostuserInfo(podInterfaceName, c)
+			if err != nil {
+				log.Log.Errorf("Failed to get vhostuser interface info: %v", err)
+				return nil, err
+			}
+			vhostPathParts := strings.Split(vhostPath, "/")
+			vhostDevice := vhostPathParts[len(vhostPathParts)-1]
+			if len(vhostPathParts) == 1 {
+				vhostPath = services.VhostuserSocketDir + vhostPath
+			}
+			domainIface.Source = api.InterfaceSource{
+				Type: "unix",
+				Path: vhostPath,
+				Mode: vhostMode,
+			}
+			domainIface.Target = &api.InterfaceTarget{
+				Device: vhostDevice,
+			}
+			var vhostuserQueueSize uint32 = 1024
+			domainIface.Driver = &api.InterfaceDriver{
+				Name:        "vhost",
+				RxQueueSize: &vhostuserQueueSize,
+				TxQueueSize: &vhostuserQueueSize,
+			}
 		}
 
 		if c.UseLaunchSecurity {
@@ -301,4 +335,40 @@ func translateModel(useVirtioTransitional *bool, bus string) string {
 		return InterpretTransitionalModelType(useVirtioTransitional)
 	}
 	return bus
+}
+
+func getPodInterfaceName(vmi *v1.VirtualMachineInstance, ifaceName string) (string, error) {
+	for i, _ := range vmi.Spec.Networks {
+		network := &vmi.Spec.Networks[i]
+		if network.Pod == nil && network.Multus == nil {
+			continue
+		}
+		iface := netvmispec.LookupInterfaceByName(vmi.Spec.Domain.Devices.Interfaces, network.Name)
+		log.Log.Infof("pod net interface name: %s, network Name: %s", iface.Name, network.Name)
+		if iface.Name == ifaceName {
+			networkNameScheme := namescheme.CreateOrdinalNetworkNameScheme(vmi.Spec.Networks)
+			podIfaceName, exists := networkNameScheme[network.Name]
+			if !exists {
+				return "", fmt.Errorf("pod interface name not found for network %s", network.Name)
+			}
+			return podIfaceName, nil
+		}
+	}
+	return "", fmt.Errorf("Interface %s not found", ifaceName)
+}
+
+func getVhostuserInfo(ifaceName string, c *ConverterContext) (string, string, error) {
+	if c.PodNetInterfaces == nil {
+		err := fmt.Errorf("PodNetInterfaces cannot be nil for vhostuser interface")
+		return "", "", err
+	}
+	for _, iface := range c.PodNetInterfaces.Interface {
+		log.Log.Infof("pod net interface name: %s, expected name: %s, device type: %s, expected device type: %s ", iface.NetworkStatus.Interface, ifaceName, iface.DeviceType, nettypes.DeviceInfoTypeVHostUser)
+		if iface.DeviceType == nettypes.DeviceInfoTypeVHostUser && iface.NetworkStatus.Interface == ifaceName {
+			return iface.NetworkStatus.DeviceInfo.VhostUser.Path, iface.NetworkStatus.DeviceInfo.VhostUser.Mode, nil
+		}
+
+	}
+	err := fmt.Errorf("Unable to get vhostuser interface info for %s", ifaceName)
+	return "", "", err
 }
