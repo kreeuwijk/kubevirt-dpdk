@@ -13,6 +13,14 @@ github.com/beorn7/perks/quantile
 # github.com/blang/semver v3.5.1+incompatible
 ## explicit
 github.com/blang/semver
+# github.com/containernetworking/cni v0.7.1
+github.com/containernetworking/cni/pkg/types
+github.com/containernetworking/cni/libcni
+github.com/containernetworking/cni/pkg/skel
+github.com/containernetworking/cni/pkg/types/current
+github.com/containernetworking/cni/pkg/version
+github.com/containernetworking/cni/pkg/invoke
+github.com/containernetworking/cni/pkg/types/020
 # github.com/c9s/goprocinfo v0.0.0-20210130143923-c95fcf8c64a8
 ## explicit
 github.com/c9s/goprocinfo/linux
@@ -196,6 +204,14 @@ github.com/imdario/mergo
 # github.com/inconshreveable/mousetrap v1.0.1
 ## explicit; go 1.18
 github.com/inconshreveable/mousetrap
+# github.com/intel/multus-cni v0.0.0-20200323144905-7f50f5f17526
+github.com/intel/multus-cni/types
+github.com/intel/multus-cni/logging
+# github.com/intel/userspace-cni-network-plugin v0.0.0-20191104125959-323d722f1046
+github.com/intel/userspace-cni-network-plugin/pkg/annotations
+github.com/intel/userspace-cni-network-plugin/pkg/types
+github.com/intel/userspace-cni-network-plugin/logging
+github.com/intel/userspace-cni-network-plugin/pkg/k8sclient
 # github.com/insomniacslk/dhcp v0.0.0-20201112113307-4de412bc85d8
 ## explicit; go 1.13
 github.com/insomniacslk/dhcp/dhcpv4
@@ -345,6 +361,11 @@ github.com/openshift/api/config/v1
 github.com/openshift/api/operator/v1
 github.com/openshift/api/route/v1
 github.com/openshift/api/security/v1
+# github.com/openshift/app-netutil v0.0.0-20200304134416-4b0b651d110f
+github.com/openshift/app-netutil/lib/v1alpha
+github.com/openshift/app-netutil/pkg/multus
+github.com/openshift/app-netutil/pkg/types
+github.com/openshift/app-netutil/pkg/userspace
 # github.com/openshift/client-go v0.0.0 => github.com/openshift/client-go v0.0.0-20210112165513-ebc401615f47
 ## explicit; go 1.13
 github.com/openshift/client-go/route/clientset/versioned/scheme

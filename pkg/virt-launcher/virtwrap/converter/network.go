@@ -130,6 +130,29 @@ func CreateDomainInterfaces(vmi *v1.VirtualMachineInstance, domain *api.Domain, 
 			}
 		} else if iface.Passt != nil {
 			domain.Spec.Devices.Emulator = "/usr/bin/qrap"
+		} else if iface.Vhostuser != nil {
+			domainIface.Type = "vhostuser"
+			interfaceName := GetPodInterfaceName(networks, cniNetworks, iface.Name)
+			vhostPath, vhostMode, err := getVhostuserInfo(interfaceName, c)
+			if err != nil {
+				log.Log.Errorf("Failed to get vhostuser interface info: %v", err)
+				return err
+			}
+			vhostPathParts := strings.Split(vhostPath, "/")
+			vhostDevice := vhostPathParts[len(vhostPathParts)-1]
+			domainIface.Source = InterfaceSource{
+				Type: "unix",
+				Path: vhostPath,
+				Mode: vhostMode,
+			}
+			domainIface.Target = &InterfaceTarget{
+				Device: vhostDevice,
+			}
+			var vhostuserQueueSize uint32 = 1024
+			domainIface.Driver = &InterfaceDriver{
+				RxQueueSize: &vhostuserQueueSize,
+				TxQueueSize: &vhostuserQueueSize,
+			}
 		}
 
 		if c.UseLaunchSecurity {
@@ -147,6 +170,29 @@ func CreateDomainInterfaces(vmi *v1.VirtualMachineInstance, domain *api.Domain, 
 	}
 
 	return domainInterfaces, nil
+}
+
+func getVhostuserInfo(ifaceName string, c *ConverterContext) (string, string, error) {
+	if c.PodNetInterfaces == nil {
+		err := fmt.Errorf("PodNetInterfaces cannot be nil for vhostuser interface")
+		return "", "", err
+	}
+	for _, iface := range c.PodNetInterfaces.Interface {
+		if iface.Type == "vhost" && iface.IfName == ifaceName {
+			return iface.Vhost.Socketpath, iface.Vhost.Mode, nil
+		}
+	}
+	err := fmt.Errorf("Unable to get vhostuser interface info for %s", ifaceName)
+	return "", "", err
+}
+
+func GetPodInterfaceName(networks map[string]*v1.Network, cniNetworks map[string]int, ifaceName string) string {
+	if networks[ifaceName].Multus != nil && !networks[ifaceName].Multus.Default {
+		// multus pod interfaces named netX
+		return fmt.Sprintf("net%d", cniNetworks[ifaceName])
+	} else {
+		return PodInterfaceNameDefault
+	}
 }
 
 func GetInterfaceType(iface *v1.Interface) string {

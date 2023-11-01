@@ -452,6 +452,61 @@ func withHotplugSupport(hotplugDiskDir string) VolumeRendererOption {
 	}
 }
 
+func withVhostuser() VolumeRendererOption {
+	return func(renderer *VolumeRenderer) error {
+		renderer.podVolumeMounts = append(renderer.podVolumeMounts, k8sv1.VolumeMount{
+			Name:      "shared-dir",
+			MountPath: VhostuserSocketDir,
+		})
+		renderer.podVolumes = append(renderer.podVolumes, k8sv1.Volume{
+			Name: "shared-dir",
+			VolumeSource: k8sv1.VolumeSource{
+				EmptyDir: &k8sv1.EmptyDirVolumeSource{},
+			},
+		})
+		renderer.podVolumeMounts = append(renderer.podVolumeMounts, k8sv1.VolumeMount{
+			Name:      "ovs-run-dir",
+			MountPath: OvsRunDirDefault,
+		})
+		renderer.podVolumes = append(renderer.podVolumes, k8sv1.Volume{
+			Name: "ovs-run-dir",
+			VolumeSource: k8sv1.VolumeSource{
+				HostPath: &k8sv1.HostPathVolumeSource{
+					Path: OvsRunDirDefault,
+				},
+			},
+		})
+		renderer.podVolumeMounts = append(renderer.podVolumeMounts, k8sv1.VolumeMount{
+			Name:      "podinfo",
+			MountPath: PodNetInfoDefault,
+		})
+		renderer.podVolumes = append(renderer.podVolumes, k8sv1.Volume{
+			Name: "podinfo",
+			VolumeSource: k8sv1.VolumeSource{
+				DownwardAPI: &k8sv1.DownwardAPIVolumeSource{
+					Items: []k8sv1.DownwardAPIVolumeFile{
+						{
+							Path: "labels",
+							FieldRef: &k8sv1.ObjectFieldSelector{
+								APIVersion: "v1",
+								FieldPath:  "metadata.labels",
+							},
+						},
+						{
+							Path: "annotations",
+							FieldRef: &k8sv1.ObjectFieldSelector{
+								APIVersion: "v1",
+								FieldPath:  "metadata.annotations",
+							},
+						},
+					},
+				},
+			},
+		})
+		return nil
+	}
+}
+
 func withSRIOVPciMapAnnotation() VolumeRendererOption {
 	return func(renderer *VolumeRenderer) error {
 		renderer.podVolumeMounts = append(renderer.podVolumeMounts, mountPath(sriov.VolumeName, sriov.MountPath))

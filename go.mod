@@ -28,7 +28,10 @@ require (
 	github.com/gorilla/websocket v1.5.0
 	github.com/imdario/mergo v0.3.15
 	github.com/insomniacslk/dhcp v0.0.0-20201112113307-4de412bc85d8
+	github.com/intel/multus-cni v0.0.0-20200323144905-7f50f5f17526 // indirect
+	github.com/intel/userspace-cni-network-plugin v0.0.0-20191104125959-323d722f1046 // indirect
 	github.com/k8snetworkplumbingwg/network-attachment-definition-client v1.3.0
+	github.com/kr/pty v1.1.5 // indirect
 	github.com/kisielk/errcheck v1.6.2
 	github.com/krolaw/dhcp4 v0.0.0-20180925202202-7cead472c414
 	github.com/kubernetes-csi/external-snapshotter/client/v4 v4.2.0
@@ -42,6 +45,7 @@ require (
 	github.com/opencontainers/runc v1.1.4
 	github.com/opencontainers/selinux v1.10.2
 	github.com/openshift/api v0.0.0
+	github.com/openshift/app-netutil v0.0.0-20200304134416-4b0b651d110f
 	github.com/openshift/client-go v0.0.0
 	github.com/openshift/library-go v0.0.0-20211220195323-eca2c467c492
 	github.com/operator-framework/operator-lifecycle-manager v0.0.0-20190725173916-b56e63a643cc

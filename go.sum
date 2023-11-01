@@ -682,6 +682,10 @@ github.com/imdario/mergo v0.3.6/go.mod h1:2EnlNZ0deacrJVfApfmtdGgDfMuh/nq6Ok1EcJ
 github.com/imdario/mergo v0.3.15 h1:M8XP7IuFNsqUx6VPK2P9OSmsYsI/YFaGil0uD21V3dM=
 github.com/imdario/mergo v0.3.15/go.mod h1:WBLT9ZmE3lPoWsEzCh9LPo3TiwVN+ZKEjmz+hD27ysY=
 github.com/inconshreveable/mousetrap v1.0.0/go.mod h1:PxqpIevigyE2G7u3NXJIT2ANytuPF1OarO4DADm73n8=
+github.com/intel/multus-cni v0.0.0-20200323144905-7f50f5f17526 h1:DbvKNYAyKiU2Kg96MmqqtS08pfGPLfpd7KEn9anQjgY=
+github.com/intel/multus-cni v0.0.0-20200323144905-7f50f5f17526/go.mod h1:6fuXjeC0EGudqIXbr+EKVxEO0JRMmjkGrzFDyW4J2FQ=
+github.com/intel/userspace-cni-network-plugin v0.0.0-20191104125959-323d722f1046 h1:fF2zzuTaamA01HVP+rfAkc7RNB4RvqjZydPq+/jx66I=
+github.com/intel/userspace-cni-network-plugin v0.0.0-20191104125959-323d722f1046/go.mod h1:wY1CVsHzQJUoLqPjGt3jzPE02DOfiPViIgXr/bC0U9s=
 github.com/inconshreveable/mousetrap v1.0.1 h1:U3uMjPSQEBMNp1lFxmllqCPM6P5u/Xq7Pgzkat/bFNc=
 github.com/inconshreveable/mousetrap v1.0.1/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/influxdata/flux v0.65.0/go.mod h1:BwN2XG2lMszOoquQaFdPET8FRQfrXiZsWmcMO9rkaVY=
@@ -944,6 +948,8 @@ github.com/opencontainers/selinux v1.6.0 h1:+bIAS/Za3q5FTwWym4fTB0vObnfCf3G/NC7K
 github.com/opencontainers/selinux v1.6.0/go.mod h1:VVGKuOLlE7v4PJyT6h7mNWvq1rzqiriPsEqVhc+svHE=
 github.com/openshift/api v0.0.0-20191219222812-2987a591a72c h1:WRWMmqacvmZDbUat6WYqpuCy2yEfIeDsxFD/Htgp2T0=
 github.com/openshift/api v0.0.0-20191219222812-2987a591a72c/go.mod h1:dh9o4Fs58gpFXGSYfnVxGR9PnV53I8TW84pQaJDdGiY=
+github.com/openshift/app-netutil v0.0.0-20200304134416-4b0b651d110f h1:RIScw7BCWshE7JTKTi0dsTQUz/sHXdEGnSr63tJ0LQc=
+github.com/openshift/app-netutil v0.0.0-20200304134416-4b0b651d110f/go.mod h1:yquIgbqpkUzct6Y3/w1CB7/enuGDeHgafcDBUbVYq00=
 github.com/openshift/client-go v0.0.0-20210112165513-ebc401615f47 h1:+TEY29DK0XhqB7HFC9OfV8qf3wffSyi7MWv3AP28DGQ=
 github.com/openshift/client-go v0.0.0-20210112165513-ebc401615f47/go.mod h1:u7NRAjtYVAKokiI9LouzTv4mhds8P4S1TwdVAfbjKSk=
 github.com/openshift/custom-resource-status v1.1.2 h1:C3DL44LEbvlbItfd8mT5jWrqPfHnSOQoQf/sypqA6A4=

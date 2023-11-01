@@ -84,6 +84,10 @@ const (
 	vhostNetPath = "/dev/vhost-net"
 )
 
+const (
+	PodInterfaceNameDefault = "eth0"
+)
+
 type deviceNamer struct {
 	existingNameMap map[string]string
 	usedDeviceMap   map[string]string
@@ -119,6 +123,7 @@ type ConverterContext struct {
 	ExpandDisksEnabled    bool
 	UseLaunchSecurity     bool
 	FreePageReporting     bool
+	PodNetInterfaces      *netutiltype.InterfaceResponse
 }
 
 func contains(volumes []string, name string) bool {
@@ -1695,6 +1700,35 @@ func Convert_v1_VirtualMachineInstance_To_api_Domain(vmi *v1.VirtualMachineInsta
 			err = vcpu.AdjustDomainForTopologyAndCPUSet(domain, vmi, c.Topology, c.CPUSet, useIOThreads)
 			if err != nil {
 				return err
+			}
+		}
+
+		if util.IsVhostuserVmi(vmi) {
+			// Shared memory required for vhostuser interfaces
+			if vmi.Spec.Domain.Memory == nil || vmi.Spec.Domain.Memory.Hugepages == nil {
+				return fmt.Errorf("Hugepage is required for vhostuser interface to add NUMA cells %v", vmi.Spec.Domain.Memory)
+			}
+			if domain.Spec.Memory.Value == 0 {
+				return fmt.Errorf("Valid memory is required for vhostuser interface to add NUMA cells")
+			}
+
+			domain.Spec.CPU.NUMA = &NUMA{}
+			sockets := domain.Spec.CPU.Topology.Sockets
+			cellMemory := domain.Spec.Memory.Value / uint64(sockets)
+			nCPUsPerCell := uint32(vcpus) / sockets
+			var idx uint32
+			for idx = 0; idx < sockets; idx++ {
+				start := idx * nCPUsPerCell
+				end := start + nCPUsPerCell - 1
+				cellCPUs := strconv.Itoa(int(start)) + "-" + strconv.Itoa(int(end))
+				cell := Cell{
+					Id:        idx,
+					CPUs:      cellCPUs,
+					Memory:    cellMemory,
+					Unit:      domain.Spec.Memory.Unit,
+					MemAccess: "shared",
+				}
+				domain.Spec.CPU.NUMA.Cell = append(domain.Spec.CPU.NUMA.Cell, cell)
 			}
 		}
 	}

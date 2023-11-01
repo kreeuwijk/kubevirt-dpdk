@@ -39,6 +39,9 @@ import (
 	"sync"
 	"time"
 
+	netutil "github.com/openshift/app-netutil/lib/v1alpha"
+	netutiltype "github.com/openshift/app-netutil/pkg/types"
+
 	"k8s.io/utils/pointer"
 
 	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/device/hostdevice/generic"
@@ -818,6 +821,33 @@ func shouldExpandOffline(disk api.Disk) bool {
 	return true
 }
 
+// Get the interfaces list from the annotiations file of the pod
+// This info is required for vhostuser interface
+func getPodNetworkInterfaceList(ifaces []v1.Interface) (*netutiltype.InterfaceResponse, error) {
+	for _, iface := range ifaces {
+		if iface.Vhostuser != nil {
+			return netutil.GetInterfaces()
+		}
+	}
+
+	for index, element := range addrs {
+		addrs[index] = strings.TrimSpace(element)
+	}
+	return true
+}
+
+// Get the interfaces list from the annotiations file of the pod
+// This info is required for vhostuser interface
+func getPodNetworkInterfaceList(ifaces []v1.Interface) (*netutiltype.InterfaceResponse, error) {
+	for _, iface := range ifaces {
+		if iface.Vhostuser != nil {
+			return netutil.GetInterfaces()
+		}
+	}
+	// When there is no vhostuser interface, pod interface list not required
+	return nil, nil
+}
+
 func (l *LibvirtDomainManager) generateConverterContext(vmi *v1.VirtualMachineInstance, allowEmulation bool, options *cmdv1.VirtualMachineOptions, isMigrationTarget bool) (*converter.ConverterContext, error) {
 
 	logger := log.Log.Object(vmi)
@@ -841,13 +871,14 @@ func (l *LibvirtDomainManager) generateConverterContext(vmi *v1.VirtualMachineIn
 	// Check if PVC volumes are block volumes
 	isBlockPVCMap := make(map[string]bool)
 	isBlockDVMap := make(map[string]bool)
-	for _, volume := range vmi.Spec.Volumes {
-		if volume.VolumeSource.PersistentVolumeClaim != nil || volume.VolumeSource.Ephemeral != nil {
-			isBlockPVC := false
-			if _, ok := hotplugVolumes[volume.Name]; ok {
-				isBlockPVC = isHotplugBlockDeviceVolume(volume.Name)
-			} else {
-				isBlockPVC, _ = isBlockDeviceVolume(volume.Name)
+	diskInfo := make(map[string]*containerdisk.DiskInfo)
+	for i, volume := range vmi.Spec.Volumes {
+		if volume.VolumeSource.PersistentVolumeClaim != nil {
+			isBlockPVC, err := isBlockDeviceVolume(volume.Name)
+			if err != nil {
+				logger.Reason(err).Errorf("failed to detect volume mode for Volume %v and PVC %v.",
+					volume.Name, volume.VolumeSource.PersistentVolumeClaim.ClaimName)
+				return nil, err
 			}
 			isBlockPVCMap[volume.Name] = isBlockPVC
 		} else if volume.VolumeSource.DataVolume != nil {
@@ -878,6 +909,12 @@ func (l *LibvirtDomainManager) generateConverterContext(vmi *v1.VirtualMachineIn
 		}
 	}
 
+	podNetInterface, err := getPodNetworkInterfaceList(vmi.Spec.Domain.Devices.Interfaces)
+	if err != nil {
+		logger.Reason(err).Errorf("failed to get pod network infor from annotations")
+		return nil, err
+	}
+
 	// Map the VirtualMachineInstance to the Domain
 	c := &converter.ConverterContext{
 		Architecture:          runtime.GOARCH,
@@ -892,6 +929,7 @@ func (l *LibvirtDomainManager) generateConverterContext(vmi *v1.VirtualMachineIn
 		EphemeraldiskCreator:  l.ephemeralDiskCreator,
 		UseLaunchSecurity:     kutil.IsSEVVMI(vmi),
 		FreePageReporting:     isFreePageReportingEnabled(false, vmi),
+		PodNetInterfaces:      podNetInterface,
 	}
 
 	if options != nil {
