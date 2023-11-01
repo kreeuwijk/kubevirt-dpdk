@@ -20,24 +20,22 @@
 package webhooks
 
 import (
-	"sync"
+	"fmt"
+	"runtime"
 
-	"github.com/golang/glog"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/cache"
 
-	v1 "kubevirt.io/client-go/api/v1"
-	"kubevirt.io/client-go/kubecli"
+	poolv1 "kubevirt.io/api/pool/v1alpha1"
+	"kubevirt.io/client-go/log"
+
+	"kubevirt.io/kubevirt/pkg/virt-operator/resource/generate/components"
+
+	v1 "kubevirt.io/api/core/v1"
 	clientutil "kubevirt.io/client-go/util"
-	"kubevirt.io/kubevirt/pkg/controller"
-	"kubevirt.io/kubevirt/pkg/util/openapi"
-	"kubevirt.io/kubevirt/pkg/virt-api/rest"
 )
 
-var webhookInformers *Informers
-var once sync.Once
-
-var Validator = openapi.CreateOpenAPIValidator(rest.ComposeAPIDefinitions())
+var Arch = runtime.GOARCH
 
 var VirtualMachineInstanceGroupVersionResource = metav1.GroupVersionResource{
 	Group:    v1.VirtualMachineInstanceGroupVersionKind.Group,
@@ -63,6 +61,12 @@ var VirtualMachineInstanceReplicaSetGroupVersionResource = metav1.GroupVersionRe
 	Resource: "virtualmachineinstancereplicasets",
 }
 
+var VirtualMachinePoolGroupVersionResource = metav1.GroupVersionResource{
+	Group:    poolv1.SchemeGroupVersion.Group,
+	Version:  poolv1.SchemeGroupVersion.Version,
+	Resource: "virtualmachinepools",
+}
+
 var MigrationGroupVersionResource = metav1.GroupVersionResource{
 	Group:    v1.VirtualMachineInstanceMigrationGroupVersionKind.Group,
 	Version:  v1.VirtualMachineInstanceMigrationGroupVersionKind.Version,
@@ -70,43 +74,36 @@ var MigrationGroupVersionResource = metav1.GroupVersionResource{
 }
 
 type Informers struct {
-	VMIPresetInformer       cache.SharedIndexInformer
-	NamespaceLimitsInformer cache.SharedIndexInformer
-	VMIInformer             cache.SharedIndexInformer
+	VMIPresetInformer  cache.SharedIndexInformer
+	VMRestoreInformer  cache.SharedIndexInformer
+	DataSourceInformer cache.SharedIndexInformer
 }
 
-// XXX fix this, this is a huge mess. Move informers to Admitter and Mutator structs.
-var mutex sync.Mutex
+func IsKubeVirtServiceAccount(serviceAccount string) bool {
+	ns, err := clientutil.GetNamespace()
+	logger := log.DefaultLogger()
 
-func GetInformers() *Informers {
-	mutex.Lock()
-	defer mutex.Unlock()
-	if webhookInformers == nil {
-		webhookInformers = newInformers()
-	}
-	return webhookInformers
-}
-
-// SetInformers created for unittest usage only
-func SetInformers(informers *Informers) {
-	mutex.Lock()
-	defer mutex.Unlock()
-	webhookInformers = informers
-}
-
-func newInformers() *Informers {
-	kubeClient, err := kubecli.GetKubevirtClient()
 	if err != nil {
-		panic(err)
+		logger.Info("Failed to get namespace. Fallback to default: 'kubevirt'")
+		ns = "kubevirt"
 	}
-	namespace, err := clientutil.GetNamespace()
-	if err != nil {
-		glog.Fatalf("Error searching for namespace: %v", err)
+
+	prefix := fmt.Sprintf("system:serviceaccount:%s", ns)
+	return serviceAccount == fmt.Sprintf("%s:%s", prefix, components.ApiServiceAccountName) ||
+		serviceAccount == fmt.Sprintf("%s:%s", prefix, components.HandlerServiceAccountName) ||
+		serviceAccount == fmt.Sprintf("%s:%s", prefix, components.ControllerServiceAccountName)
+}
+
+func IsARM64(vmiSpec *v1.VirtualMachineInstanceSpec) bool {
+	if vmiSpec.Architecture == "arm64" {
+		return true
 	}
-	kubeInformerFactory := controller.NewKubeInformerFactory(kubeClient.RestClient(), kubeClient, nil, namespace)
-	return &Informers{
-		VMIInformer:             kubeInformerFactory.VMI(),
-		VMIPresetInformer:       kubeInformerFactory.VirtualMachinePreset(),
-		NamespaceLimitsInformer: kubeInformerFactory.LimitRanges(),
+	return false
+}
+
+func IsPPC64(vmiSpec *v1.VirtualMachineInstanceSpec) bool {
+	if vmiSpec.Architecture == "ppc64le" {
+		return true
 	}
+	return false
 }

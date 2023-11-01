@@ -21,14 +21,13 @@ package virt_api
 
 import (
 	"errors"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
 
-	restful "github.com/emicklei/go-restful"
+	restful "github.com/emicklei/go-restful/v3"
 	"github.com/golang/mock/gomock"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/ghttp"
 	k8sv1 "k8s.io/api/core/v1"
@@ -38,7 +37,7 @@ import (
 	"kubevirt.io/kubevirt/pkg/util"
 
 	"kubevirt.io/client-go/kubecli"
-	"kubevirt.io/client-go/log"
+
 	"kubevirt.io/kubevirt/pkg/virt-api/rest"
 )
 
@@ -51,14 +50,13 @@ var _ = Describe("Virt-api", func() {
 	var backend *httptest.Server
 	var ctrl *gomock.Controller
 	var authorizorMock *rest.MockVirtApiAuthorizor
-	log.Log.SetIOWriter(GinkgoWriter)
 
 	BeforeEach(func() {
 		app = virtAPIApp{namespace: namespaceKubevirt}
 		server = ghttp.NewServer()
 
 		backend = httptest.NewServer(nil)
-		tmpDir, err := ioutil.TempDir("", "api_tmp_dir")
+		tmpDir, err := os.MkdirTemp("", "api_tmp_dir")
 		Expect(err).ToNot(HaveOccurred())
 		app.virtCli, _ = kubecli.GetKubevirtClientFromFlags(server.URL(), "")
 		app.certsDirectory = tmpDir
@@ -90,7 +88,7 @@ var _ = Describe("Virt-api", func() {
 			err := app.readRequestHeader()
 			Expect(err).To(HaveOccurred())
 
-		}, 5)
+		})
 
 		It("should fail without requestheader CA", func() {
 
@@ -105,7 +103,7 @@ var _ = Describe("Virt-api", func() {
 
 			err := app.readRequestHeader()
 			Expect(err).To(HaveOccurred())
-		}, 5)
+		})
 
 		It("should auto detect correct request headers from cert configmap", func() {
 			configMap := &k8sv1.ConfigMap{}
@@ -126,7 +124,7 @@ var _ = Describe("Virt-api", func() {
 			Expect(app.authorizor.GetUserHeaders()).To(Equal([]string{"X-Remote-User", "fakeheader1"}))
 			Expect(app.authorizor.GetGroupHeaders()).To(Equal([]string{"X-Remote-Group", "fakeheader2"}))
 			Expect(app.authorizor.GetExtraPrefixHeaders()).To(Equal([]string{"X-Remote-Extra-", "fakeheader3-"}))
-		}, 5)
+		})
 
 		It("should return internal error on authorizor error", func() {
 			app.authorizor = authorizorMock
@@ -138,7 +136,7 @@ var _ = Describe("Virt-api", func() {
 			resp, err := http.Get(backend.URL)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(http.StatusInternalServerError))
-		}, 5)
+		})
 
 		It("should return unauthorized error if not allowed", func() {
 			app.authorizor = authorizorMock
@@ -150,7 +148,7 @@ var _ = Describe("Virt-api", func() {
 			resp, err := http.Get(backend.URL)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(http.StatusUnauthorized))
-		}, 5)
+		})
 
 		It("should return ok on root URL", func() {
 			app.authorizor = authorizorMock
@@ -162,19 +160,7 @@ var _ = Describe("Virt-api", func() {
 			resp, err := http.Get(backend.URL)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
-		}, 5)
-
-		It("should have a test endpoint", func() {
-			app.authorizor = authorizorMock
-			authorizorMock.EXPECT().
-				Authorize(gomock.Not(gomock.Nil())).
-				Return(true, "", nil).
-				AnyTimes()
-			app.Compose()
-			resp, err := http.Get(backend.URL + "/apis/subresources.kubevirt.io/v1alpha3/namespaces/default/virtualmachineinstances/vm1/test")
-			Expect(err).ToNot(HaveOccurred())
-			Expect(resp.StatusCode).To(Equal(http.StatusOK))
-		}, 5)
+		})
 
 		It("should have a version endpoint", func() {
 			app.authorizor = authorizorMock
@@ -187,7 +173,7 @@ var _ = Describe("Virt-api", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
 			// TODO: Check version
-		}, 5)
+		})
 
 		It("should return info on the api group version", func() {
 			app.authorizor = authorizorMock
@@ -200,7 +186,7 @@ var _ = Describe("Virt-api", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
 			// TODO: Check list
-		}, 5)
+		})
 
 		It("should return info on the API group", func() {
 			app.authorizor = authorizorMock
@@ -213,7 +199,7 @@ var _ = Describe("Virt-api", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
 			// TODO: Check list
-		}, 5)
+		})
 
 		It("should return API group list on /apis", func() {
 			app.authorizor = authorizorMock
@@ -226,13 +212,13 @@ var _ = Describe("Virt-api", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
 			// TODO: Check list
-		}, 5)
+		})
 
 		It("should have default values for flags", func() {
 			app.AddFlags()
 			Expect(app.SwaggerUI).To(Equal("third_party/swagger-ui"))
 			Expect(app.SubresourcesOnly).To(BeFalse())
-		}, 5)
+		})
 
 	})
 

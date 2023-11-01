@@ -23,14 +23,17 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/pflag"
 	"google.golang.org/grpc"
 
-	vmSchema "kubevirt.io/client-go/api/v1"
+	vmSchema "kubevirt.io/api/core/v1"
 	"kubevirt.io/client-go/log"
+
 	"kubevirt.io/kubevirt/pkg/hooks"
 	hooksInfo "kubevirt.io/kubevirt/pkg/hooks/info"
 	hooksV1alpha1 "kubevirt.io/kubevirt/pkg/hooks/v1alpha1"
@@ -38,7 +41,10 @@ import (
 	domainSchema "kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/api"
 )
 
-const baseBoardManufacturerAnnotation = "smbios.vm.kubevirt.io/baseBoardManufacturer"
+const (
+	baseBoardManufacturerAnnotation = "smbios.vm.kubevirt.io/baseBoardManufacturer"
+	onDefineDomainLoggingMessage    = "Hook's OnDefineDomain callback method has been called"
+)
 
 type infoServer struct {
 	Version string
@@ -53,7 +59,7 @@ func (s infoServer) Info(ctx context.Context, params *hooksInfo.InfoParams) (*ho
 			s.Version,
 		},
 		HookPoints: []*hooksInfo.HookPoint{
-			&hooksInfo.HookPoint{
+			{
 				Name:     hooksInfo.OnDefineDomainHookPointName,
 				Priority: 0,
 			},
@@ -65,7 +71,7 @@ type v1alpha1Server struct{}
 type v1alpha2Server struct{}
 
 func (s v1alpha2Server) OnDefineDomain(ctx context.Context, params *hooksV1alpha2.OnDefineDomainParams) (*hooksV1alpha2.OnDefineDomainResult, error) {
-	log.Log.Info("Hook's OnDefineDomain callback method has been called")
+	log.Log.Info(onDefineDomainLoggingMessage)
 	newDomainXML, err := onDefineDomain(params.GetVmi(), params.GetDomainXML())
 	if err != nil {
 		return nil, err
@@ -81,7 +87,7 @@ func (s v1alpha2Server) PreCloudInitIso(_ context.Context, params *hooksV1alpha2
 }
 
 func (s v1alpha1Server) OnDefineDomain(ctx context.Context, params *hooksV1alpha1.OnDefineDomainParams) (*hooksV1alpha1.OnDefineDomainResult, error) {
-	log.Log.Info("Hook's OnDefineDomain callback method has been called")
+	log.Log.Info(onDefineDomainLoggingMessage)
 	newDomainXML, err := onDefineDomain(params.GetVmi(), params.GetDomainXML())
 	if err != nil {
 		return nil, err
@@ -92,7 +98,7 @@ func (s v1alpha1Server) OnDefineDomain(ctx context.Context, params *hooksV1alpha
 }
 
 func onDefineDomain(vmiJSON []byte, domainXML []byte) ([]byte, error) {
-	log.Log.Info("Hook's OnDefineDomain callback method has been called")
+	log.Log.Info(onDefineDomainLoggingMessage)
 
 	vmiSpec := vmSchema.VirtualMachineInstance{}
 	err := json.Unmarshal(vmiJSON, &vmiSpec)
@@ -146,7 +152,7 @@ func main() {
 	pflag.StringVar(&version, "version", "", "hook version to use")
 	pflag.Parse()
 
-	socketPath := hooks.HookSocketsSharedDirectory + "/smbios.sock"
+	socketPath := filepath.Join(hooks.HookSocketsSharedDirectory, "smbios.sock")
 	socket, err := net.Listen("unix", socketPath)
 	if err != nil {
 		log.Log.Reason(err).Errorf("Failed to initialized socket on path: %s", socket)
@@ -157,7 +163,9 @@ func main() {
 
 	server := grpc.NewServer([]grpc.ServerOption{}...)
 
-	//hooksV1alpha1.Version,
+	if version == "" {
+		panic(fmt.Errorf("usage: \n        /example-hook-sidecar --version v1alpha1|v1alpha2"))
+	}
 	hooksInfo.RegisterInfoServer(server, infoServer{Version: version})
 	hooksV1alpha1.RegisterCallbacksServer(server, v1alpha1Server{})
 	hooksV1alpha2.RegisterCallbacksServer(server, v1alpha2Server{})

@@ -3,23 +3,27 @@ package webhooks
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 
-	"k8s.io/api/admission/v1beta1"
+	admissionv1 "k8s.io/api/admission/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	v12 "kubevirt.io/client-go/api/v1"
+	v12 "kubevirt.io/api/core/v1"
+	instancetypev1beta1 "kubevirt.io/api/instancetype/v1beta1"
 	"kubevirt.io/client-go/log"
+
+	"kubevirt.io/kubevirt/pkg/virt-api/definitions"
 	"kubevirt.io/kubevirt/pkg/virt-api/webhooks"
 )
 
 // GetAdmissionReview
-func GetAdmissionReview(r *http.Request) (*v1beta1.AdmissionReview, error) {
+func GetAdmissionReview(r *http.Request) (*admissionv1.AdmissionReview, error) {
 	var body []byte
 	if r.Body != nil {
-		if data, err := ioutil.ReadAll(r.Body); err == nil {
+		if data, err := io.ReadAll(r.Body); err == nil {
 			body = data
 		}
 	}
@@ -30,16 +34,16 @@ func GetAdmissionReview(r *http.Request) (*v1beta1.AdmissionReview, error) {
 		return nil, fmt.Errorf("contentType=%s, expect application/json", contentType)
 	}
 
-	ar := &v1beta1.AdmissionReview{}
+	ar := &admissionv1.AdmissionReview{}
 	err := json.Unmarshal(body, ar)
 	return ar, err
 }
 
 // ToAdmissionResponseError
-func ToAdmissionResponseError(err error) *v1beta1.AdmissionResponse {
+func ToAdmissionResponseError(err error) *admissionv1.AdmissionResponse {
 	log.Log.Reason(err).Error("admission generic error")
 
-	return &v1beta1.AdmissionResponse{
+	return &admissionv1.AdmissionResponse{
 		Result: &v1.Status{
 			Message: err.Error(),
 			Code:    http.StatusBadRequest,
@@ -47,7 +51,7 @@ func ToAdmissionResponseError(err error) *v1beta1.AdmissionResponse {
 	}
 }
 
-func ToAdmissionResponse(causes []v1.StatusCause) *v1beta1.AdmissionResponse {
+func ToAdmissionResponse(causes []v1.StatusCause) *admissionv1.AdmissionResponse {
 	log.Log.Infof("rejected vmi admission")
 
 	globalMessage := ""
@@ -59,7 +63,7 @@ func ToAdmissionResponse(causes []v1.StatusCause) *v1beta1.AdmissionResponse {
 		}
 	}
 
-	return &v1beta1.AdmissionResponse{
+	return &admissionv1.AdmissionResponse{
 		Result: &v1.Status{
 			Message: globalMessage,
 			Reason:  v1.StatusReasonInvalid,
@@ -71,7 +75,7 @@ func ToAdmissionResponse(causes []v1.StatusCause) *v1beta1.AdmissionResponse {
 	}
 }
 
-func ValidationErrorsToAdmissionResponse(errs []error) *v1beta1.AdmissionResponse {
+func ValidationErrorsToAdmissionResponse(errs []error) *admissionv1.AdmissionResponse {
 	var causes []v1.StatusCause
 	for _, e := range errs {
 		causes = append(causes,
@@ -83,13 +87,13 @@ func ValidationErrorsToAdmissionResponse(errs []error) *v1beta1.AdmissionRespons
 	return ToAdmissionResponse(causes)
 }
 
-func ValidateSchema(gvk schema.GroupVersionKind, data []byte) *v1beta1.AdmissionResponse {
+func ValidateSchema(gvk schema.GroupVersionKind, data []byte) *admissionv1.AdmissionResponse {
 	in := map[string]interface{}{}
 	err := json.Unmarshal(data, &in)
 	if err != nil {
 		return ToAdmissionResponseError(err)
 	}
-	errs := webhooks.Validator.Validate(gvk, in)
+	errs := definitions.Validator.Validate(gvk, in)
 	if len(errs) > 0 {
 		return ValidationErrorsToAdmissionResponse(errs)
 	}
@@ -107,4 +111,102 @@ func ValidateRequestResource(request v1.GroupVersionResource, group string, reso
 	}
 
 	return false
+}
+
+func ValidateStatus(data []byte) *admissionv1.AdmissionResponse {
+	in := map[string]interface{}{}
+	err := json.Unmarshal(data, &in)
+	if err != nil {
+		return ToAdmissionResponseError(err)
+	}
+	obj := unstructured.Unstructured{Object: in}
+	gvk := obj.GroupVersionKind()
+	if gvk.Kind == "" {
+		return ValidationErrorsToAdmissionResponse([]error{fmt.Errorf("could not determine object kind")})
+	}
+	errs := definitions.Validator.ValidateStatus(gvk, in)
+	if len(errs) > 0 {
+		return ValidationErrorsToAdmissionResponse(errs)
+	}
+	return nil
+}
+
+func GetVMIFromAdmissionReview(ar *admissionv1.AdmissionReview) (new *v12.VirtualMachineInstance, old *v12.VirtualMachineInstance, err error) {
+
+	if !ValidateRequestResource(ar.Request.Resource, webhooks.VirtualMachineInstanceGroupVersionResource.Group, webhooks.VirtualMachineInstanceGroupVersionResource.Resource) {
+		return nil, nil, fmt.Errorf("expect resource to be '%s'", webhooks.VirtualMachineInstanceGroupVersionResource.Resource)
+	}
+
+	raw := ar.Request.Object.Raw
+	newVMI := v12.VirtualMachineInstance{}
+
+	err = json.Unmarshal(raw, &newVMI)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if ar.Request.Operation == admissionv1.Update {
+		raw := ar.Request.OldObject.Raw
+		oldVMI := v12.VirtualMachineInstance{}
+
+		err = json.Unmarshal(raw, &oldVMI)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &newVMI, &oldVMI, nil
+	}
+
+	return &newVMI, nil, nil
+}
+
+func GetVMFromAdmissionReview(ar *admissionv1.AdmissionReview) (new *v12.VirtualMachine, old *v12.VirtualMachine, err error) {
+
+	if !ValidateRequestResource(ar.Request.Resource, webhooks.VirtualMachineGroupVersionResource.Group, webhooks.VirtualMachineGroupVersionResource.Resource) {
+		return nil, nil, fmt.Errorf("expect resource to be '%s'", webhooks.VirtualMachineGroupVersionResource.Resource)
+	}
+
+	raw := ar.Request.Object.Raw
+	newVM := v12.VirtualMachine{}
+
+	err = json.Unmarshal(raw, &newVM)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if ar.Request.Operation == admissionv1.Update {
+		raw := ar.Request.OldObject.Raw
+		oldVM := v12.VirtualMachine{}
+
+		err = json.Unmarshal(raw, &oldVM)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &newVM, &oldVM, nil
+	}
+
+	return &newVM, nil, nil
+}
+
+func GetInstanceTypeSpecFromAdmissionRequest(request *admissionv1.AdmissionRequest) (new *instancetypev1beta1.VirtualMachineInstancetypeSpec, old *instancetypev1beta1.VirtualMachineInstancetypeSpec, err error) {
+
+	raw := request.Object.Raw
+	instancetypeObj := instancetypev1beta1.VirtualMachineInstancetype{}
+
+	err = json.Unmarshal(raw, &instancetypeObj)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if request.Operation == admissionv1.Update {
+		raw := request.OldObject.Raw
+		oldInstancetypeObj := instancetypev1beta1.VirtualMachineInstancetype{}
+
+		err = json.Unmarshal(raw, &oldInstancetypeObj)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &instancetypeObj.Spec, &oldInstancetypeObj.Spec, nil
+	}
+
+	return &instancetypeObj.Spec, nil, nil
 }

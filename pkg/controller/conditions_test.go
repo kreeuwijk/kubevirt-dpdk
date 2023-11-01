@@ -19,12 +19,14 @@
 package controller
 
 import (
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"kubevirt.io/client-go/api"
 
 	v12 "k8s.io/api/core/v1"
 
-	v1 "kubevirt.io/client-go/api/v1"
+	v1 "kubevirt.io/api/core/v1"
 )
 
 var _ = Describe("VirtualMachineInstance ConditionManager", func() {
@@ -35,7 +37,7 @@ var _ = Describe("VirtualMachineInstance ConditionManager", func() {
 	var pc2 *v12.PodCondition
 
 	BeforeEach(func() {
-		vmi = v1.NewMinimalVMI("test")
+		vmi = api.NewMinimalVMI("test")
 
 		pc1 = &v12.PodCondition{
 			Type:   v12.PodScheduled,
@@ -65,7 +67,7 @@ var _ = Describe("VirtualMachineInstance ConditionManager", func() {
 			It("should only have 1 condition", func() {
 				cm.AddPodCondition(vmi, pc1)
 				cm.AddPodCondition(vmi, pc2)
-				Expect(len(vmi.Status.Conditions)).To(Equal(1))
+				Expect(vmi.Status.Conditions).To(HaveLen(1))
 			})
 		})
 	})
@@ -74,6 +76,58 @@ var _ = Describe("VirtualMachineInstance ConditionManager", func() {
 		It("should gracefully report condition not available", func() {
 			var vmi2 *v1.VirtualMachineInstance
 			Expect(cm.HasCondition(vmi2, v1.VirtualMachineInstanceConditionType(pc1.Type))).To(BeFalse())
+		})
+	})
+
+	When("Updating a condition", func() {
+
+		var vc1 *v1.VirtualMachineInstanceCondition
+		BeforeEach(func() {
+			vc1 = &v1.VirtualMachineInstanceCondition{
+				Type:    v1.VirtualMachineInstanceReady,
+				Status:  v12.ConditionFalse,
+				Reason:  "A reason",
+				Message: "A message",
+			}
+
+			vmi.Status.Conditions = []v1.VirtualMachineInstanceCondition{*vc1}
+		})
+
+		It("should update the condition if status has changed", func() {
+			vc2 := &v1.VirtualMachineInstanceCondition{
+				Type:   v1.VirtualMachineInstanceReady,
+				Status: v12.ConditionTrue,
+			}
+
+			cm.UpdateCondition(vmi, vc2)
+			Expect(vmi.Status.Conditions).To(HaveLen(1))
+			Expect(cm.GetCondition(vmi, vc1.Type)).To(Equal(vc2))
+		})
+
+		It("should update the condition if the reason has changed", func() {
+			vc2 := &v1.VirtualMachineInstanceCondition{
+				Type:    v1.VirtualMachineInstanceReady,
+				Status:  v12.ConditionFalse,
+				Reason:  "A different reason",
+				Message: "A different message",
+			}
+
+			cm.UpdateCondition(vmi, vc2)
+			Expect(vmi.Status.Conditions).To(HaveLen(1))
+			Expect(cm.GetCondition(vmi, vc1.Type)).To(Equal(vc2))
+		})
+
+		It("shouldn't update the condition if both status and reason hasn't changed", func() {
+			vc2 := &v1.VirtualMachineInstanceCondition{
+				Type:    v1.VirtualMachineInstanceReady,
+				Status:  v12.ConditionFalse,
+				Reason:  "A reason",
+				Message: "A different message",
+			}
+
+			cm.UpdateCondition(vmi, vc2)
+			Expect(vmi.Status.Conditions).To(HaveLen(1))
+			Expect(cm.GetCondition(vmi, vc1.Type)).To(Equal(vc1))
 		})
 	})
 })

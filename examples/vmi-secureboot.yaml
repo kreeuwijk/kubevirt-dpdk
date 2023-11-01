@@ -1,5 +1,5 @@
 ---
-apiVersion: kubevirt.io/v1alpha3
+apiVersion: kubevirt.io/v1
 kind: VirtualMachineInstance
 metadata:
   labels:
@@ -20,13 +20,11 @@ spec:
       bootloader:
         efi:
           secureBoot: true
-    machine:
-      type: ""
     resources:
       requests:
         memory: 1Gi
   terminationGracePeriodSeconds: 0
   volumes:
   - containerDisk:
-      image: registry:5000/kubevirt/microlivecd-container-disk-demo:devel
+      image: registry:5000/kubevirt/fedora-with-test-tooling-container-disk:devel
     name: containerdisk

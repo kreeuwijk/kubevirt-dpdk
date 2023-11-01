@@ -18,6 +18,7 @@ load("//vendor/kubevirt.io/client-go/version:def.bzl", "version_x_defs")
 go_binary(
     name = "virt-controller",
     embed = [":go_default_library"],
+    static = "on",
     visibility = ["//visibility:public"],
     x_defs = version_x_defs(),
 )
@@ -37,7 +38,7 @@ container_image(
 container_image(
     name = "virt-controller-image",
     architecture = select({
-        "@io_bazel_rules_go//go/platform:linux_ppc64le": "ppc64le",
+        "@io_bazel_rules_go//go/platform:linux_arm64": "arm64",
         "//conditions:default": "amd64",
     }),
     base = ":version-container",

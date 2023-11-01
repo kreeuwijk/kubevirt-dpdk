@@ -1,13 +1,15 @@
 package webhooks
 
 import (
+	"context"
 	"fmt"
 
-	"k8s.io/api/admission/v1beta1"
+	admissionv1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1 "kubevirt.io/client-go/api/v1"
+	v1 "kubevirt.io/api/core/v1"
 	"kubevirt.io/client-go/kubecli"
+
 	webhookutils "kubevirt.io/kubevirt/pkg/util/webhooks"
 	validating_webhooks "kubevirt.io/kubevirt/pkg/util/webhooks/validating-webhooks"
 )
@@ -30,7 +32,7 @@ type KubeVirtDeletionAdmitter struct {
 	client kubecli.KubevirtClient
 }
 
-func (k *KubeVirtDeletionAdmitter) Admit(review *v1beta1.AdmissionReview) *v1beta1.AdmissionResponse {
+func (k *KubeVirtDeletionAdmitter) Admit(review *admissionv1.AdmissionReview) *admissionv1.AdmissionResponse {
 	var kv *v1.KubeVirt
 	var err error
 	if review.Request.Name != "" {
@@ -58,7 +60,7 @@ func (k *KubeVirtDeletionAdmitter) Admit(review *v1beta1.AdmissionReview) *v1bet
 		return validating_webhooks.NewPassingAdmissionResponse()
 	}
 
-	vmis, err := k.client.VirtualMachineInstance(metav1.NamespaceAll).List(&metav1.ListOptions{Limit: 2})
+	vmis, err := k.client.VirtualMachineInstance(metav1.NamespaceAll).List(context.Background(), &metav1.ListOptions{Limit: 2})
 
 	if err != nil {
 		return webhookutils.ToAdmissionResponseError(err)
@@ -68,7 +70,7 @@ func (k *KubeVirtDeletionAdmitter) Admit(review *v1beta1.AdmissionReview) *v1bet
 		return webhookutils.ToAdmissionResponseError(fmt.Errorf(uninstallErrorMsg, "Virtual Machine Instances"))
 	}
 
-	vms, err := k.client.VirtualMachine(metav1.NamespaceAll).List(&metav1.ListOptions{Limit: 2})
+	vms, err := k.client.VirtualMachine(metav1.NamespaceAll).List(context.Background(), &metav1.ListOptions{Limit: 2})
 
 	if err != nil {
 		return webhookutils.ToAdmissionResponseError(err)

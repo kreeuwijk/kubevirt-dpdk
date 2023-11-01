@@ -21,16 +21,17 @@ package watchdog
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	v1 "kubevirt.io/client-go/api/v1"
+	v1 "kubevirt.io/api/core/v1"
 	"kubevirt.io/client-go/log"
 	"kubevirt.io/client-go/precond"
+
 	diskutils "kubevirt.io/kubevirt/pkg/ephemeral-disk-utils"
+	"kubevirt.io/kubevirt/pkg/util"
 	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/api"
 )
 
@@ -49,8 +50,8 @@ func WatchdogFileGetUID(baseDir string, vmi *v1.VirtualMachineInstance) string {
 	domain := precond.MustNotBeEmpty(vmi.GetObjectMeta().GetName())
 
 	filePath := WatchdogFileFromNamespaceName(baseDir, namespace, domain)
-
-	b, err := ioutil.ReadFile(filePath)
+	// #nosec No risk for path injection. Using static path and base path of "virtShareDir"
+	b, err := os.ReadFile(filePath)
 	if err != nil {
 		return ""
 	}
@@ -65,21 +66,18 @@ func WatchdogFileRemove(baseDir string, vmi *v1.VirtualMachineInstance) error {
 	file := WatchdogFileFromNamespaceName(baseDir, namespace, domain)
 
 	log.Log.V(3).Infof("Remove watchdog file %s", file)
-	return diskutils.RemoveFile(file)
+	return diskutils.RemoveFilesIfExist(file)
 }
 
-func WatchdogFileUpdate(watchdogFile string, uid string) error {
+func WatchdogFileUpdate(watchdogFile string, uid string) (err error) {
 	f, err := os.Create(watchdogFile)
 	if err != nil {
 		return err
 	}
-	_, err = f.WriteString(uid)
-	if err != nil {
-		return err
-	}
-	f.Close()
+	defer util.CloseIOAndCheckErr(f, &err)
 
-	return nil
+	_, err = f.WriteString(uid)
+	return err
 }
 
 func WatchdogFileExists(baseDir string, vmi *v1.VirtualMachineInstance) (bool, error) {
@@ -97,6 +95,10 @@ func WatchdogFileExists(baseDir string, vmi *v1.VirtualMachineInstance) (bool, e
 }
 
 func WatchdogFileIsExpired(timeoutSeconds int, baseDir string, vmi *v1.VirtualMachineInstance) (bool, error) {
+	return watchdogFileIsExpired(timeoutSeconds, baseDir, vmi, time.Now())
+}
+
+func watchdogFileIsExpired(timeoutSeconds int, baseDir string, vmi *v1.VirtualMachineInstance, timeNow time.Time) (bool, error) {
 	namespace := precond.MustNotBeEmpty(vmi.GetObjectMeta().GetNamespace())
 	domain := precond.MustNotBeEmpty(vmi.GetObjectMeta().GetName())
 
@@ -116,7 +118,7 @@ func WatchdogFileIsExpired(timeoutSeconds int, baseDir string, vmi *v1.VirtualMa
 		return false, err
 	}
 
-	now := time.Now().UTC().Unix()
+	now := timeNow.UTC().Unix()
 
 	return isExpired(now, timeoutSeconds, stat), nil
 }
@@ -132,6 +134,10 @@ func isExpired(now int64, timeoutSeconds int, stat os.FileInfo) bool {
 }
 
 func GetExpiredDomains(timeoutSeconds int, virtShareDir string) ([]*api.Domain, error) {
+	return getExpiredDomains(timeoutSeconds, virtShareDir, time.Now())
+}
+
+func getExpiredDomains(timeoutSeconds int, virtShareDir string, timeNow time.Time) ([]*api.Domain, error) {
 
 	var domains []*api.Domain
 
@@ -142,13 +148,18 @@ func GetExpiredDomains(timeoutSeconds int, virtShareDir string) ([]*api.Domain, 
 		return domains, nil
 	}
 
-	files, err := ioutil.ReadDir(fileDir)
+	files, err := os.ReadDir(fileDir)
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC().Unix()
+	now := timeNow.UTC().Unix()
 	for _, file := range files {
-		if isExpired(now, timeoutSeconds, file) == true {
+		fileInfo, err := file.Info()
+		if err != nil {
+			return nil, err
+		}
+
+		if isExpired(now, timeoutSeconds, fileInfo) == true {
 			key := file.Name()
 			namespace, name, err := splitFileNamespaceName(key)
 			if err != nil {

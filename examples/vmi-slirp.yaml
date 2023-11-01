@@ -1,5 +1,5 @@
 ---
-apiVersion: kubevirt.io/v1alpha3
+apiVersion: kubevirt.io/v1
 kind: VirtualMachineInstance
 metadata:
   labels:
@@ -23,8 +23,6 @@ spec:
           protocol: TCP
         slirp: {}
       rng: {}
-    machine:
-      type: ""
     resources:
       requests:
         memory: 1024M
@@ -34,13 +32,15 @@ spec:
   terminationGracePeriodSeconds: 0
   volumes:
   - containerDisk:
-      image: registry:5000/kubevirt/fedora-cloud-container-disk-demo:devel
+      image: registry:5000/kubevirt/fedora-with-test-tooling-container-disk:devel
     name: containerdisk
   - cloudInitNoCloud:
       userData: |-
-        #!/bin/bash
-        echo "fedora" |passwd fedora --stdin
-        yum install -y nginx
-        systemctl enable nginx
-        systemctl start nginx
+        #cloud-config
+        password: fedora
+        chpasswd: { expire: False }
+        packages:
+          - nginx
+        runcmd:
+          - [ "systemctl", "enable", "--now", "nginx" ]
     name: cloudinitdisk

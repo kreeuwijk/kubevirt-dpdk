@@ -21,17 +21,17 @@ package cache
 
 import (
 	"encoding/xml"
-	"io/ioutil"
 	"net"
 	"os"
 	"path/filepath"
-	"reflect"
+	"sync"
 	"time"
 
 	"github.com/golang/mock/gomock"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/tools/cache"
 
@@ -52,22 +52,26 @@ var _ = Describe("Domain informer", func() {
 	var ghostCacheDir string
 	var informer cache.SharedInformer
 	var stopChan chan struct{}
+	var wg *sync.WaitGroup
 	var ctrl *gomock.Controller
 	var domainManager *virtwrap.MockDomainManager
 	var socketPath string
+	var resyncPeriod int
 
 	podUID := "1234"
 
 	BeforeEach(func() {
+		resyncPeriod = 5
 		stopChan = make(chan struct{})
+		wg = &sync.WaitGroup{}
 
-		shareDir, err = ioutil.TempDir("", "kubevirt-share")
+		shareDir, err = os.MkdirTemp("", "kubevirt-share")
 		Expect(err).ToNot(HaveOccurred())
 
-		podsDir, err = ioutil.TempDir("", "")
+		podsDir, err = os.MkdirTemp("", "")
 		Expect(err).ToNot(HaveOccurred())
 
-		ghostCacheDir, err = ioutil.TempDir("", "")
+		ghostCacheDir, err = os.MkdirTemp("", "")
 		Expect(err).ToNot(HaveOccurred())
 
 		InitializeGhostRecordCache(ghostCacheDir)
@@ -82,7 +86,7 @@ var _ = Describe("Domain informer", func() {
 		socketPath = cmdclient.SocketFilePathOnHost(podUID)
 		os.MkdirAll(filepath.Dir(socketPath), 0755)
 
-		informer, err = NewSharedInformer(shareDir, 10, nil, nil)
+		informer, err = NewSharedInformer(shareDir, 10, nil, nil, time.Duration(resyncPeriod)*time.Second)
 		Expect(err).ToNot(HaveOccurred())
 
 		ctrl = gomock.NewController(GinkgoT())
@@ -91,23 +95,23 @@ var _ = Describe("Domain informer", func() {
 
 	AfterEach(func() {
 		close(stopChan)
+		wg.Wait()
 		os.RemoveAll(shareDir)
 		os.RemoveAll(podsDir)
 		os.RemoveAll(ghostCacheDir)
 		DeleteGhostRecord("test", "test")
-		ctrl.Finish()
 	})
 
 	verifyObj := func(key string, domain *api.Domain) {
 		obj, exists, err := informer.GetStore().GetByKey(key)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		if domain != nil {
 			Expect(exists).To(BeTrue())
 
 			eventDomain := obj.(*api.Domain)
 			eventDomain.Spec.XMLName = xml.Name{}
-			Expect(reflect.DeepEqual(&domain.Spec, &eventDomain.Spec)).To(BeTrue())
+			Expect(equality.Semantic.DeepEqual(&domain.Spec, &eventDomain.Spec)).To(BeTrue())
 		} else {
 
 			Expect(exists).To(BeFalse())
@@ -207,8 +211,10 @@ var _ = Describe("Domain informer", func() {
 			list = append(list, api.NewMinimalDomain("testvmi1"))
 
 			domainManager.EXPECT().ListAllDomains().Return(list, nil)
+			domainManager.EXPECT().GetGuestOSInfo().Return(&api.GuestOSInfo{})
+			domainManager.EXPECT().InterfacesStatus().Return([]api.InterfaceStatus{})
 
-			cmdserver.RunServer(socketPath, domainManager, stopChan, nil)
+			runCMDServer(wg, socketPath, domainManager, stopChan, nil)
 
 			// ensure we can connect to the server first.
 			client, err := cmdclient.NewClient(socketPath)
@@ -223,7 +229,7 @@ var _ = Describe("Domain informer", func() {
 			listResults, err := d.listAllKnownDomains()
 			Expect(err).ToNot(HaveOccurred())
 
-			Expect(len(listResults)).To(Equal(1))
+			Expect(listResults).To(HaveLen(1))
 		})
 
 		It("should list current domains including inactive domains with ghost record", func() {
@@ -232,9 +238,12 @@ var _ = Describe("Domain informer", func() {
 			list = append(list, api.NewMinimalDomain("testvmi1"))
 
 			domainManager.EXPECT().ListAllDomains().Return(list, nil)
+			domainManager.EXPECT().GetGuestOSInfo().Return(&api.GuestOSInfo{})
+			domainManager.EXPECT().InterfacesStatus().Return([]api.InterfaceStatus{})
 
 			err := AddGhostRecord("test1-namespace", "test1", "somefile1", "1234-1")
-			cmdserver.RunServer(socketPath, domainManager, stopChan, nil)
+			Expect(err).ToNot(HaveOccurred())
+			runCMDServer(wg, socketPath, domainManager, stopChan, nil)
 
 			// ensure we can connect to the server first.
 			client, err := cmdclient.NewClient(socketPath)
@@ -250,7 +259,7 @@ var _ = Describe("Domain informer", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			// includes both the domain with an active socket and the ghost record with deleted socket
-			Expect(len(listResults)).To(Equal(2))
+			Expect(listResults).To(HaveLen(2))
 		})
 		It("should detect active domains at startup.", func() {
 			var list []*api.Domain
@@ -259,18 +268,60 @@ var _ = Describe("Domain informer", func() {
 			list = append(list, domain)
 
 			domainManager.EXPECT().ListAllDomains().Return(list, nil)
+			domainManager.EXPECT().GetGuestOSInfo().Return(&api.GuestOSInfo{})
+			domainManager.EXPECT().InterfacesStatus().Return([]api.InterfaceStatus{})
 
-			cmdserver.RunServer(socketPath, domainManager, stopChan, nil)
+			runCMDServer(wg, socketPath, domainManager, stopChan, nil)
 
 			// ensure we can connect to the server first.
 			client, err := cmdclient.NewClient(socketPath)
 			Expect(err).ToNot(HaveOccurred())
 			client.Close()
 
-			go informer.Run(stopChan)
+			runInformer(wg, stopChan, informer)
 			cache.WaitForCacheSync(stopChan, informer.HasSynced)
 
 			verifyObj("default/test", domain)
+		})
+
+		It("should resync active domains after resync period.", func() {
+
+			domain := api.NewMinimalDomain("test")
+			domainManager.EXPECT().ListAllDomains().Return([]*api.Domain{domain}, nil)
+			domainManager.EXPECT().GetGuestOSInfo().Return(&api.GuestOSInfo{})
+			domainManager.EXPECT().InterfacesStatus().Return([]api.InterfaceStatus{})
+			// now prove if we make a change, like adding a label, that the resync
+			// will pick that change up automatically
+			newDomain := domain.DeepCopy()
+			newDomain.ObjectMeta.Labels = make(map[string]string)
+			newDomain.ObjectMeta.Labels["some-label"] = "some-value"
+			domainManager.EXPECT().ListAllDomains().Return([]*api.Domain{newDomain}, nil)
+			domainManager.EXPECT().GetGuestOSInfo().Return(nil)
+			domainManager.EXPECT().InterfacesStatus().Return(nil)
+
+			runCMDServer(wg, socketPath, domainManager, stopChan, nil)
+
+			// ensure we can connect to the server first.
+			client, err := cmdclient.NewClient(socketPath)
+			Expect(err).ToNot(HaveOccurred())
+			client.Close()
+
+			runInformer(wg, stopChan, informer)
+			cache.WaitForCacheSync(stopChan, informer.HasSynced)
+
+			verifyObj("default/test", domain)
+
+			time.Sleep(time.Duration(resyncPeriod+1) * time.Second)
+
+			obj, exists, err := informer.GetStore().GetByKey("default/test")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(exists).To(BeTrue())
+
+			eventDomain := obj.(*api.Domain)
+			val, ok := eventDomain.ObjectMeta.Labels["some-label"]
+
+			Expect(ok).To(BeTrue())
+			Expect(val).To(Equal("some-value"))
 		})
 
 		It("should detect expired legacy watchdog file.", func() {
@@ -283,6 +334,7 @@ var _ = Describe("Domain informer", func() {
 				virtShareDir:             shareDir,
 				watchdogTimeout:          1,
 				unresponsiveSockets:      make(map[string]int64),
+				resyncPeriod:             time.Duration(1) * time.Hour,
 			}
 
 			watchdogFile := watchdog.WatchdogFileFromNamespaceName(shareDir, "default", "test")
@@ -305,7 +357,7 @@ var _ = Describe("Domain informer", func() {
 
 			Expect(timedOut).To(BeFalse())
 
-		}, 5)
+		})
 
 		It("should detect unresponsive sockets.", func() {
 
@@ -320,6 +372,7 @@ var _ = Describe("Domain informer", func() {
 				virtShareDir:             shareDir,
 				watchdogTimeout:          1,
 				unresponsiveSockets:      make(map[string]int64),
+				resyncPeriod:             time.Duration(1) * time.Hour,
 			}
 
 			err = d.startBackground()
@@ -338,7 +391,7 @@ var _ = Describe("Domain informer", func() {
 
 			Expect(timedOut).To(BeFalse())
 
-		}, 6)
+		})
 
 		It("should detect responsive sockets and not mark for deletion.", func() {
 
@@ -365,6 +418,7 @@ var _ = Describe("Domain informer", func() {
 				virtShareDir:             shareDir,
 				watchdogTimeout:          1,
 				unresponsiveSockets:      make(map[string]int64),
+				resyncPeriod:             time.Duration(1) * time.Hour,
 			}
 
 			err = d.startBackground()
@@ -381,7 +435,7 @@ var _ = Describe("Domain informer", func() {
 			}
 
 			Expect(timedOut).To(BeTrue())
-		}, 6)
+		})
 
 		It("should not return errors when encountering disconnected clients at startup.", func() {
 			var list []*api.Domain
@@ -390,19 +444,21 @@ var _ = Describe("Domain informer", func() {
 			list = append(list, domain)
 
 			domainManager.EXPECT().ListAllDomains().Return(list, nil)
+			domainManager.EXPECT().GetGuestOSInfo().Return(&api.GuestOSInfo{})
+			domainManager.EXPECT().InterfacesStatus().Return([]api.InterfaceStatus{})
 
 			// This file doesn't have a unix sock server behind it
 			// verify list still completes regardless
 			f, err := os.Create(filepath.Join(socketsDir, "default_fakevm_sock"))
+			Expect(err).ToNot(HaveOccurred())
 			f.Close()
-			cmdserver.RunServer(socketPath, domainManager, stopChan, nil)
-
+			runCMDServer(wg, socketPath, domainManager, stopChan, nil)
 			// ensure we can connect to the server first.
 			client, err := cmdclient.NewClient(socketPath)
 			Expect(err).ToNot(HaveOccurred())
 			client.Close()
 
-			go informer.Run(stopChan)
+			runInformer(wg, stopChan, informer)
 			cache.WaitForCacheSync(stopChan, informer.HasSynced)
 
 			verifyObj("default/test", domain)
@@ -410,7 +466,7 @@ var _ = Describe("Domain informer", func() {
 		It("should watch for domain events.", func() {
 			domain := api.NewMinimalDomain("test")
 
-			go informer.Run(stopChan)
+			runInformer(wg, stopChan, informer)
 			cache.WaitForCacheSync(stopChan, informer.HasSynced)
 
 			client := notifyclient.NewNotifier(shareDir)
@@ -436,3 +492,20 @@ var _ = Describe("Domain informer", func() {
 		})
 	})
 })
+
+func runCMDServer(wg *sync.WaitGroup, socketPath string,
+	domainManager virtwrap.DomainManager,
+	stopChan chan struct{},
+	options *cmdserver.ServerOptions) {
+	wg.Add(1)
+	done, _ := cmdserver.RunServer(socketPath, domainManager, stopChan, options)
+	go func() {
+		<-done
+		wg.Done()
+	}()
+}
+
+func runInformer(wg *sync.WaitGroup, stopChan chan struct{}, informer cache.SharedInformer) {
+	wg.Add(1)
+	go func() { informer.Run(stopChan); wg.Done() }()
+}

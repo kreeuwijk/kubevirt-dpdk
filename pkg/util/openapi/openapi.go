@@ -5,34 +5,23 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/emicklei/go-restful"
-	restfulspec "github.com/emicklei/go-restful-openapi"
-	"github.com/go-openapi/errors"
-	"github.com/go-openapi/spec"
+	"github.com/emicklei/go-restful/v3"
+	openapi_spec "github.com/go-openapi/spec"
 	"github.com/go-openapi/strfmt"
-	"github.com/go-openapi/validate"
+	openapi_validate "github.com/go-openapi/validate"
 	"github.com/golang/glog"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/kube-openapi/pkg/builder"
 	"k8s.io/kube-openapi/pkg/common"
-
-	v1 "kubevirt.io/client-go/api/v1"
-	snapshotv1 "kubevirt.io/client-go/apis/snapshot/v1alpha1"
+	"k8s.io/kube-openapi/pkg/validation/errors"
+	"k8s.io/kube-openapi/pkg/validation/spec"
+	"kubevirt.io/client-go/api"
 )
 
 type Validator struct {
-	specSchemes   *spec.Schema
-	statusSchemes *spec.Schema
+	specSchemes   *openapi_spec.Schema
+	statusSchemes *openapi_spec.Schema
 	topLevelKeys  map[string]interface{}
-}
-
-func CreateOpenAPIConfig(webServices []*restful.WebService) restfulspec.Config {
-	return restfulspec.Config{
-		WebServices:                   webServices,
-		WebServicesURL:                "",
-		APIPath:                       "/swaggerapi",
-		PostBuildSwaggerObjectHandler: addInfoToSwaggerObject,
-	}
 }
 
 func addInfoToSwaggerObject(swo *spec.Swagger) {
@@ -66,7 +55,7 @@ func addInfoToSwaggerObject(swo *spec.Swagger) {
 	swo.Security[0] = map[string][]string{"BearerToken": {}}
 }
 
-func createConfig() *common.Config {
+func CreateConfig() *common.Config {
 	return &common.Config{
 		CommonResponses: map[int]spec.Response{
 			401: {
@@ -101,20 +90,28 @@ func createConfig() *common.Config {
 			},
 		},
 		GetDefinitions: func(ref common.ReferenceCallback) map[string]common.OpenAPIDefinition {
-			m := v1.GetOpenAPIDefinitions(ref)
-			m2 := snapshotv1.GetOpenAPIDefinitions(ref)
-			for k, v := range m2 {
+			m := api.GetOpenAPIDefinitions(ref)
+			for k, v := range m {
 				if _, ok := m[k]; !ok {
 					m[k] = v
 				}
 			}
 			return m
 		},
+
+		GetDefinitionName: func(name string) (string, spec.Extensions) {
+			if strings.Contains(name, "kubevirt.io") {
+				// keeping for validation
+				return name[strings.LastIndex(name, "/")+1:], nil
+			}
+			//adpting k8s style
+			return strings.ReplaceAll(name, "/", "."), nil
+		},
 	}
 }
 
 func LoadOpenAPISpec(webServices []*restful.WebService) *spec.Swagger {
-	config := createConfig()
+	config := CreateConfig()
 	openapispec, err := builder.BuildOpenAPISpec(webServices, config)
 	if err != nil {
 		panic(fmt.Errorf("Failed to build swagger: %s", err))
@@ -125,7 +122,30 @@ func LoadOpenAPISpec(webServices []*restful.WebService) *spec.Swagger {
 	// https://github.com/kubernetes/kubernetes/issues/66899 is ready
 	// Otherwise CRDs can't use templates which contain metadata and controllers
 	// can't set conditions without timestamps
-	objectMeta, exists := openapispec.Definitions["v1.ObjectMeta"]
+
+	objectmeta := ""
+	for k := range openapispec.Definitions {
+		if strings.Contains(k, "v1.ObjectMeta") {
+			objectmeta = k
+			break
+		}
+	}
+	resourceRequirements, exists := openapispec.Definitions["v1.ResourceRequirements"]
+	if exists {
+		limits, exists := resourceRequirements.Properties["limits"]
+		if exists {
+			limits.AdditionalProperties = nil
+			resourceRequirements.Properties["limits"] = limits
+		}
+		requests, exists := resourceRequirements.Properties["requests"]
+		if exists {
+			requests.AdditionalProperties = nil
+			resourceRequirements.Properties["requests"] = requests
+		}
+
+	}
+
+	objectMeta, exists := openapispec.Definitions[objectmeta]
 	if exists {
 		prop := objectMeta.Properties["creationTimestamp"]
 		prop.Type = spec.StringOrArray{"string", "null"}
@@ -156,21 +176,21 @@ func LoadOpenAPISpec(webServices []*restful.WebService) *spec.Swagger {
 			prop.Ref = spec.Ref{}
 			s.Properties["lastTransitionTime"] = prop
 		}
-		if k == "v1.HTTPGetAction" {
+		if strings.Contains(k, "v1.HTTPGetAction") {
 			prop := s.Properties["port"]
 			prop.Type = spec.StringOrArray{"string", "number"}
 			// As intstr.IntOrString, the ref for that must be masked
 			prop.Ref = spec.Ref{}
 			s.Properties["port"] = prop
 		}
-		if k == "v1.TCPSocketAction" {
+		if strings.Contains(k, "v1.TCPSocketAction") {
 			prop := s.Properties["port"]
 			prop.Type = spec.StringOrArray{"string", "number"}
 			// As intstr.IntOrString, the ref for that must be masked
 			prop.Ref = spec.Ref{}
 			s.Properties["port"] = prop
 		}
-		if k == "v1.PersistentVolumeClaimSpec" {
+		if strings.Contains(k, "v1.PersistentVolumeClaimSpec") {
 			for i, r := range s.Required {
 				if r == "dataSource" {
 					s.Required = append(s.Required[:i], s.Required[i+1:]...)
@@ -191,7 +211,7 @@ func CreateOpenAPIValidator(webServices []*restful.WebService) *Validator {
 		glog.Fatal(err)
 	}
 
-	specSchema := &spec.Schema{}
+	specSchema := &openapi_spec.Schema{}
 	err = json.Unmarshal(data, specSchema)
 	if err != nil {
 		panic(err)
@@ -199,25 +219,26 @@ func CreateOpenAPIValidator(webServices []*restful.WebService) *Validator {
 
 	// Make sure that no unknown fields are allowed in specs
 	for k, v := range specSchema.Definitions {
-		v.AdditionalProperties = &spec.SchemaOrBool{Allows: false}
-		v.AdditionalItems = &spec.SchemaOrBool{Allows: false}
+		v.AdditionalProperties = &openapi_spec.SchemaOrBool{Allows: false}
+		v.AdditionalItems = &openapi_spec.SchemaOrBool{Allows: false}
 		specSchema.Definitions[k] = v
 	}
 
 	// Expand the specSchemes
-	err = spec.ExpandSchema(specSchema, specSchema, nil)
+	err = openapi_spec.ExpandSchema(specSchema, specSchema, nil)
 	if err != nil {
 		glog.Fatal(err)
 	}
 
 	// Load spec once again for status. The status should accept unknown fields
-	statusSchema := &spec.Schema{}
+	statusSchema := &openapi_spec.Schema{}
 	err = json.Unmarshal(data, statusSchema)
 	if err != nil {
 		panic(err)
 	}
+
 	// Expand the statusSchemes
-	err = spec.ExpandSchema(statusSchema, statusSchema, nil)
+	err = openapi_spec.ExpandSchema(statusSchema, statusSchema, nil)
 	if err != nil {
 		glog.Fatal(err)
 	}
@@ -237,7 +258,7 @@ func CreateOpenAPIValidator(webServices []*restful.WebService) *Validator {
 
 func (v *Validator) Validate(gvk schema.GroupVersionKind, obj map[string]interface{}) []error {
 	errs := []error{}
-	for k, _ := range obj {
+	for k := range obj {
 		if _, exists := v.topLevelKeys[k]; !exists {
 			errs = append(errs, errors.PropertyNotAllowed("", "body", k))
 		}
@@ -254,12 +275,12 @@ func (v *Validator) Validate(gvk schema.GroupVersionKind, obj map[string]interfa
 
 func (v *Validator) ValidateSpec(gvk schema.GroupVersionKind, obj map[string]interface{}) []error {
 	schema := v.specSchemes.Definitions["v1."+gvk.Kind+"Spec"]
-	result := validate.NewSchemaValidator(&schema, nil, "spec", strfmt.Default).Validate(obj["spec"])
+	result := openapi_validate.NewSchemaValidator(&schema, nil, "spec", strfmt.Default).Validate(obj["spec"])
 	return result.Errors
 }
 
 func (v *Validator) ValidateStatus(gvk schema.GroupVersionKind, obj map[string]interface{}) []error {
 	schema := v.statusSchemes.Definitions["v1."+gvk.Kind+"Status"]
-	result := validate.NewSchemaValidator(&schema, nil, "status", strfmt.Default).Validate(obj["status"])
+	result := openapi_validate.NewSchemaValidator(&schema, nil, "status", strfmt.Default).Validate(obj["status"])
 	return result.Errors
 }

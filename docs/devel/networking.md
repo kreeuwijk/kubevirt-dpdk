@@ -14,7 +14,7 @@ casually referred to as `binding` throughout this developer's guide.
 In this section we'll explain how VM networking is configured. In order to
 follow the principle of least privilege (where each component is limited
 to only its required privileges), the configuration of a KubeVirt VM interfaces
-is split into two distint phases:
+is split into two distinct phases:
 - [privileged networking configuration](#privileged-vmi-networking-configuration): occurs in the virt-handler process
 - [unprivileged networking configuration](#unprivileged-vmi-networking-configuration): occurs in the virt-launcher process
 
@@ -55,9 +55,8 @@ the following operations, in this order:
 ### Unprivileged VMI networking configuration
 The virt-launcher is an untrusted component of KubeVirt (since it wraps the
 libvirt process that will run third party workloads). As a result, it must be
-run with as little privileges as required. As of now, the only capabilities
-required by virt-launcher to configure networking is the `CAP_NET_ADMIN` and
-the `CAP_NET_RAW` capabilites.
+run with as little privileges as required. As of now, the only capability
+required by virt-launcher to configure networking is `CAP_NET_BIND_SERVICE`.
 
 In this second phase, virt-launcher also has to select the correct
 `BindMechanism`, and afterwards will uses it to retrieve the configuration
@@ -152,7 +151,7 @@ the VIF, along with any routes CNI has configured.
 
 In the `preparePodNetworkInterfaces` method, KubeVirt randomizes the in-pod
 veth mac-address; the original one, will be plugged into the VM. It also
-creates an in-pod bridge, and sets the pod networking interface as a slave to
+creates an in-pod bridge, and sets the pod networking interface as a port to
 this bridge. This happens in phase#1 - i.e. performed by virt-handler on
 behalf of virt-launcher.
 
@@ -193,8 +192,8 @@ stage, will look like:
 
 Once the VM is booted, libvirt will consume the interface xml definition and
 create a tap device - named after the `target` parameter. That tap device will
-have the in-pod bridge as its master, and the tap device's MAC address, and
-link MTU will be configured according to the values set in the domain xml.
+be attached to the in-pod bridge, and the tap device's MAC address,
+and link MTU will be configured according to the values set in the domain xml.
 
 Finally, and depending if the pod networking interface had configured IP
 address(es), an in-pod DHCP server will be created to advertise the IP address
@@ -211,7 +210,7 @@ Similar to the [bridge bind mechanism](#bridge-binding-mechanism), triggering
 the masquerade `BindMechanism` requires a VMI configuration featuring a
 network with the `masquerade` interface type. KubeVirt provides an example of
 a
-[fedora based VMI](https://github.com/kubevirt/kubevirt/blob/master/examples/vmi-masquerade.yaml)
+[fedora based VMI](https://github.com/kubevirt/kubevirt/blob/main/examples/vmi-masquerade.yaml)
 in the project's examples folder.
 
 The masquerade bind mechanism has plenty in common with bridge binding; both
@@ -224,12 +223,12 @@ However, the similarities end there; while the networking infrastructure is
 the same, VM networking works completely different.
 
 In masquerade binding, the goal is to NAT the traffic from the pod interface
-into the VM interface via IPtables / NFtables. Before venturing into details,
+into the VM interface via NFtables. Before venturing into details,
 the relevant knobs should be described.
 
 There are 2 knobs that impact the configuration of the masquerade binding:
   - `ports`: an attribute of the interface, described in the
-    `spec::domain::interfaces` subtree. Here the user indicates the white-list
+    `spec::domain::interfaces` subtree. Here the user indicates the allowlist
      of ports and protocols. It is important to mention that when the list is
      omitted, **all** ports are implicitly included.
   - `vmNetworkCIDR`: the CIDR from which the in-pod bridge **and** the VM will
@@ -266,57 +265,58 @@ NAT is configured in the `preparePodNetworkInterfaces` method. The bridge is
 configured with the IP address previously reserved for the VM's gateway.
 
 The bridge acts as the vm's default gateway and not as a L2 bridge,
-therefore, the pod networking interface is not set as its slave.
-Since a linux bridge gets the MAC address of its first slave and we don't want it to
+therefore, the pod networking interface is not set as its port.
+Since a linux bridge gets the MAC address of its first port and we don't want it to
 take the MAC address of the first tap device attached to it,
 `preparePodNetworkInterfaces` creates a dummy nic and sets it as the first
-slave of the bridge.
+port of the bridge.
 
-Afterwards, the nftables / iptables rules are provisioned in the NAT table. It
+Afterwards, the nftables rules are provisioned in the NAT table. It
 follows a standard one to one NAT implementation using netfilter.
 
-It first involves the `PREROUTING` chain, which is responsible for packets that
+It first involves the `prerouting` chain, which is responsible for packets that
 have just arrived at the network interface. This rule simply filters all
 incoming traffic from the pod networking interface, making it go through the
 `KUBEVIRT_PREINBOUND` chain.
 
 ```
-Chain PREROUTING (policy ACCEPT)
-target               prot opt in   source               destination
-KUBEVIRT_PREINBOUND  all  --  eth0 anywhere             anywhere
+chain prerouting {
+		iifname "eth0" counter jump KUBEVIRT_PREINBOUND
+}
 ```
 
 On the `KUBEVIRT_PREINBOUND` chain, packets will be DNAT'ed (have their
 destination address changed) to the IP address of the VM - e.g. `10.11.12.2`.
-This can be subject to a whitelist of ports (if one was provided by the user,
+This can be subject to an allowlist of ports (if one was provided by the user,
 in the masquerade interface specification) or simply have all ports accepted -
 when the port configuration is omitted.
 
 ```
-Chain KUBEVIRT_PREINBOUND (1 references)
-target     prot opt source               destination
-DNAT       tcp  --  anywhere             anywhere             tcp dpt:http to:10.0.2.2
+chain KUBEVIRT_PREINBOUND {
+		counter dnat to 10.11.12.2
+}
 ```
 
 Before the packet leaves the interface, it will pass through the
-`POSTROUTING` chain, which in turn, makes the packet go through the
+`postrouting` chain, which in turn, makes the packet go through the
 `KUBEVIRT_POSTINBOUND` chain.
 
 ```
-Chain POSTROUTING (policy ACCEPT)
-target     prot opt source               destination
-KUBEVIRT_POSTINBOUND  all  --  anywhere   anywhere
+chain postrouting {
+	oifname "k6t-eth0" counter jump KUBEVIRT_POSTINBOUND
+}
 ```
 
 In the `KUBEVIRT_POSTINBOUND` chain, in case the source address is localhost, SNAT is
 performed: the source IP address of the outbound packet is modified to the IP address of
 the gateway -
+-
 `10.11.12.1`.
 
 ```
-Chain KUBEVIRT_POSTINBOUND (1 references)
-target     prot opt source               destination
-SNAT       tcp  --  anywhere             anywhere             tcp dpt:http to:10.0.2.1
+chain KUBEVIRT_POSTINBOUND {
+		ip saddr { 127.0.0.1 } counter snat to 10.11.12.1
+}
 ```
 
 Once the packet leaves the interface, it will be subject to the routing tables
@@ -330,9 +330,9 @@ source address will be masqueraded to the IP address of the pod, via the
 masquerade target.
 
 ```
-Chain POSTROUTING (policy ACCEPT)
-target     prot opt source               destination
-MASQUERADE  all  --  10.0.2.2             anywhere
+chain postrouting {
+	ip saddr 10.11.12.2 counter masquerade
+}
 ```
 
 ### Masquerade binding using IPv6 addresses
@@ -348,29 +348,28 @@ nftable table. Please refer to the tables below to visualize how NAT for IPv6
 addresses is accomplished in KubeVirt.
 
 ```
-Chain PREROUTING (policy ACCEPT)
-target               prot opt source               destination
-KUBEVIRT_PREINBOUND  all      anywhere             anywhere
+table ip6 nat {
+	chain prerouting {
+		iifname "eth0" counter jump KUBEVIRT_PREINBOUND
+	}
 
-Chain INPUT (policy ACCEPT)
-target     prot opt source               destination
+	chain output {
+		ip6 daddr { ::1 } counter dnat to fd10:0:2::2
+	}
 
-Chain OUTPUT (policy ACCEPT)
-target     prot opt source               destination
-DNAT       tcp      anywhere             localhost            tcp dpt:http to:fd10:0:2::2
+	chain postrouting {
+		ip6 saddr fd10:0:2::2 counter masquerade
+		oifname "k6t-eth0" counter jump KUBEVIRT_POSTINBOUND
+	}
 
-Chain POSTROUTING (policy ACCEPT)
-target     prot opt source               destination
-MASQUERADE  all      fd10:0:2::2          anywhere
-KUBEVIRT_POSTINBOUND  all      anywhere   anywhere
+	chain KUBEVIRT_PREINBOUND {
+		counter dnat to fd10:0:2::2
+	}
 
-Chain KUBEVIRT_POSTINBOUND (1 references)
-target     prot opt source               destination
-SNAT       tcp      anywhere             anywhere             tcp dpt:http to:fd10:0:2::1
-
-Chain KUBEVIRT_PREINBOUND (1 references)
-target     prot opt source               destination
-DNAT       tcp      anywhere             anywhere             tcp dpt:http to:fd10:0:2::2
+	chain KUBEVIRT_POSTINBOUND {
+		ip6 saddr { ::1 } counter snat to fd10:0:2::1
+	}
+}
 ```
 
 It is important to refer that masquerade binding configures NAT for both IPv4
@@ -380,4 +379,4 @@ which implicitly highly encourages IPv6 communication towards the VM instance.
 
 On a final note, there is a difference that impacts the user experience when
 using masquerade binding for IPv6 addresses; the VMI IP must be [manually
-configured by the user](https://kubevirt.io/user-guide/#/creation/interfaces-and-networks?id=masquerade-ipv6-support).
+configured by the user](https://kubevirt.io/user-guide/virtual_machines/interfaces_and_networks/#masquerade-ipv4-and-ipv6-dual-stack-support).

@@ -1,5 +1,5 @@
 ---
-apiVersion: kubevirt.io/v1alpha3
+apiVersion: kubevirt.io/v1
 kind: VirtualMachineInstance
 metadata:
   labels:
@@ -7,16 +7,10 @@ metadata:
   name: vmi-sata
 spec:
   domain:
-    devices:
-      disks:
-      - disk:
-          bus: sata
-        name: containerdisk
-    machine:
-      type: ""
+    devices: {}
     resources:
       requests:
-        memory: 64M
+        memory: 128Mi
   terminationGracePeriodSeconds: 0
   volumes:
   - containerDisk:

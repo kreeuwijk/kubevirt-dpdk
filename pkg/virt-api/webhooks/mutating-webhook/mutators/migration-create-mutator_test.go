@@ -22,13 +22,15 @@ package mutators
 import (
 	"encoding/json"
 
-	. "github.com/onsi/ginkgo"
+	"kubevirt.io/kubevirt/pkg/apimachinery/patch"
+
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/api/admission/v1beta1"
+	admissionv1 "k8s.io/api/admission/v1"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	v1 "kubevirt.io/client-go/api/v1"
+	v1 "kubevirt.io/api/core/v1"
 )
 
 var _ = Describe("VirtualMachineInstanceMigration Mutator", func() {
@@ -38,8 +40,8 @@ var _ = Describe("VirtualMachineInstanceMigration Mutator", func() {
 		migrationBytes, err := json.Marshal(migration)
 		Expect(err).ToNot(HaveOccurred())
 		By("Creating the test admissions review from the Migration object")
-		ar := &v1beta1.AdmissionReview{
-			Request: &v1beta1.AdmissionRequest{
+		ar := &admissionv1.AdmissionReview{
+			Request: &admissionv1.AdmissionRequest{
 				Resource: k8smetav1.GroupVersionResource{Group: v1.VirtualMachineInstanceMigrationGroupVersionKind.Group, Version: v1.VirtualMachineInstanceMigrationGroupVersionKind.Version, Resource: "virtualmachineinstancemigrations"},
 				Object: runtime.RawExtension{
 					Raw: migrationBytes,
@@ -55,13 +57,13 @@ var _ = Describe("VirtualMachineInstanceMigration Mutator", func() {
 		By("Getting the VMI spec from the response")
 		migrationSpec := &v1.VirtualMachineInstanceMigrationSpec{}
 		migrationMeta := &k8smetav1.ObjectMeta{}
-		patch := []patchOperation{
+		patchOps := []patch.PatchOperation{
 			{Value: migrationSpec},
 			{Value: migrationMeta},
 		}
-		err = json.Unmarshal(resp.Patch, &patch)
+		err = json.Unmarshal(resp.Patch, &patchOps)
 		Expect(err).ToNot(HaveOccurred())
-		Expect(patch).NotTo(BeEmpty())
+		Expect(patchOps).NotTo(BeEmpty())
 
 		return migrationSpec, migrationMeta
 	}
@@ -85,5 +87,11 @@ var _ = Describe("VirtualMachineInstanceMigration Mutator", func() {
 	It("should apply finalizer on migration create", func() {
 		_, migrationMeta := getMigrationSpecMetaFromResponse()
 		Expect(migrationMeta.Finalizers).To(ContainElement(v1.VirtualMachineInstanceMigrationFinalizer))
+	})
+
+	It("should add the selector label", func() {
+		_, migrationMeta := getMigrationSpecMetaFromResponse()
+		Expect(migrationMeta.Labels).ToNot(BeNil())
+		Expect(migrationMeta.Labels[v1.MigrationSelectorLabel]).To(Equal(migration.Spec.VMIName))
 	})
 })

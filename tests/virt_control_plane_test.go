@@ -20,56 +20,73 @@
 package tests_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
+	"kubevirt.io/kubevirt/tests/decorators"
+
+	v1 "k8s.io/api/apps/v1"
+	k8sv1 "k8s.io/api/core/v1"
 	"k8s.io/api/policy/v1beta1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	k6sv1 "kubevirt.io/api/core/v1"
 	"kubevirt.io/client-go/kubecli"
+
 	"kubevirt.io/kubevirt/tests"
+	"kubevirt.io/kubevirt/tests/exec"
+	"kubevirt.io/kubevirt/tests/flags"
+	"kubevirt.io/kubevirt/tests/framework/checks"
+	"kubevirt.io/kubevirt/tests/framework/kubevirt"
+	"kubevirt.io/kubevirt/tests/framework/matcher"
+	"kubevirt.io/kubevirt/tests/libnode"
+	"kubevirt.io/kubevirt/tests/testsuite"
+	"kubevirt.io/kubevirt/tests/util"
 )
 
 const (
-	WaitSecondsBeforeDeploymentCheck     = 2 * time.Second
 	DefaultStabilizationTimeoutInSeconds = 300
 	DefaultPollIntervalInSeconds         = 3
-	labelKey                             = "control-plane-test"
-	labelValue                           = "selected"
 )
 
-var _ = Describe("[ref_id:2717]KubeVirt control plane resilience", func() {
+const (
+	multiReplica  = true
+	singleReplica = false
+)
+
+var _ = Describe("[Serial][ref_id:2717][sig-compute]KubeVirt control plane resilience", Serial, decorators.SigCompute, func() {
+
+	var virtCli kubecli.KubevirtClient
 
 	RegisterFailHandler(Fail)
 
-	virtCli, err := kubecli.GetKubevirtClient()
-	Expect(err).ToNot(HaveOccurred())
-	deploymentsClient := virtCli.AppsV1().Deployments(tests.KubeVirtInstallNamespace)
-
 	controlPlaneDeploymentNames := []string{"virt-api", "virt-controller"}
 
+	BeforeEach(func() {
+		virtCli = kubevirt.Client()
+	})
+
 	Context("pod eviction", func() {
+		var nodeList []k8sv1.Node
 
-		var nodeNames []string
-		var selectedNodeName string
-
-		tests.FlagParse()
-
-		getRunningReadyPods := func(podList *v1.PodList, podNames []string, nodeNames ...string) (pods []*v1.Pod) {
-			pods = make([]*v1.Pod, 0)
+		getRunningReadyPods := func(podList *k8sv1.PodList, podNames []string, nodeNames ...string) (pods []*k8sv1.Pod) {
+			pods = make([]*k8sv1.Pod, 0)
 			for _, pod := range podList.Items {
-				if pod.Status.Phase != v1.PodRunning {
+				if pod.Status.Phase != k8sv1.PodRunning {
 					continue
 				}
-				podReady := tests.PodReady(&pod)
-				if podReady != v1.ConditionTrue {
+
+				if success, err := matcher.HaveConditionTrue(k8sv1.PodReady).Match(pod); !success {
+					Expect(err).ToNot(HaveOccurred())
 					continue
 				}
+
 				for _, podName := range podNames {
 					if strings.HasPrefix(pod.Name, podName) {
 						if len(nodeNames) > 0 {
@@ -89,19 +106,15 @@ var _ = Describe("[ref_id:2717]KubeVirt control plane resilience", func() {
 			return
 		}
 
-		getPodList := func() (podList *v1.PodList, err error) {
-			podList, err = virtCli.CoreV1().Pods(tests.KubeVirtInstallNamespace).List(metav1.ListOptions{})
-			return
-		}
-
-		getSelectedNode := func() (selectedNode *v1.Node, err error) {
-			selectedNode, err = virtCli.CoreV1().Nodes().Get(selectedNodeName, metav1.GetOptions{})
+		getPodList := func() (podList *k8sv1.PodList, err error) {
+			podList, err = virtCli.CoreV1().Pods(flags.KubeVirtInstallNamespace).List(context.Background(), metav1.ListOptions{})
 			return
 		}
 
 		waitForDeploymentsToStabilize := func() (bool, error) {
+			deploymentsClient := virtCli.AppsV1().Deployments(flags.KubeVirtInstallNamespace)
 			for _, deploymentName := range controlPlaneDeploymentNames {
-				deployment, err := deploymentsClient.Get(deploymentName, metav1.GetOptions{})
+				deployment, err := deploymentsClient.Get(context.Background(), deploymentName, metav1.GetOptions{})
 				if err != nil {
 					return false, err
 				}
@@ -115,180 +128,60 @@ var _ = Describe("[ref_id:2717]KubeVirt control plane resilience", func() {
 			return true, nil
 		}
 
-		addLabelToSelectedNode := func() (bool, error) {
-			selectedNode, err := getSelectedNode()
-			if err != nil {
-				return false, err
-			}
-			if selectedNode.Labels == nil {
-				selectedNode.Labels = make(map[string]string)
-			}
-			selectedNode.Labels[labelKey] = labelValue
-			_, err = virtCli.CoreV1().Nodes().Update(selectedNode)
-			if err != nil {
-				return false, fmt.Errorf("failed to update node: %v", err)
-			}
-			return true, nil
-		}
-
-		// Add nodeSelector to deployments so that they get scheduled to selectedNode
-		addNodeSelectorToDeployments := func() (bool, error) {
-			for _, deploymentName := range controlPlaneDeploymentNames {
-				deployment, err := deploymentsClient.Get(deploymentName, metav1.GetOptions{})
-				if err != nil {
-					return false, err
-				}
-
-				labelMap := make(map[string]string)
-				labelMap[labelKey] = labelValue
-				if deployment.Spec.Template.Spec.NodeSelector == nil {
-					deployment.Spec.Template.Spec.NodeSelector = make(map[string]string)
-				}
-				deployment.Spec.Template.Spec.NodeSelector[labelKey] = labelValue
-				_, err = deploymentsClient.Update(deployment)
-				if err != nil {
-					return false, err
-				}
-			}
-			return true, nil
-		}
-
-		checkControlPlanePodsHaveNodeSelector := func() (bool, error) {
-			podList, err := getPodList()
-			if err != nil {
-				return false, err
-			}
-			runningControlPlanePods := getRunningReadyPods(podList, controlPlaneDeploymentNames)
-			for _, pod := range runningControlPlanePods {
-				if actualLabelValue, ok := pod.Spec.NodeSelector[labelKey]; ok {
-					if actualLabelValue != labelValue {
-						return false, fmt.Errorf("pod %s has node selector %s with value %s, expected was %s", pod.Name, labelKey, actualLabelValue, labelValue)
-					}
-				} else {
-					return false, fmt.Errorf("pod %s has no node selector %s", pod.Name, labelKey)
-				}
-			}
-			return true, nil
-		}
-
 		eventuallyWithTimeout := func(f func() (bool, error)) {
 			Eventually(f,
 				DefaultStabilizationTimeoutInSeconds, DefaultPollIntervalInSeconds,
 			).Should(BeTrue())
 		}
 
-		setSelectedNodeUnschedulable := func() {
-			Eventually(func() error {
-				selectedNode, err := getSelectedNode()
-				if err != nil {
-					return err
-				}
-				selectedNode.Spec.Unschedulable = true
-				if _, err = virtCli.CoreV1().Nodes().Update(selectedNode); err != nil {
-					return err
-				}
-				return nil
-			}, 30*time.Second, time.Second).ShouldNot(HaveOccurred())
-		}
-
 		BeforeEach(func() {
-			tests.BeforeTestCleanup()
-
-			nodes := tests.GetAllSchedulableNodes(virtCli).Items
-			nodeNames = make([]string, len(nodes))
-			for index, node := range nodes {
-				nodeNames[index] = node.Name
+			nodeList = libnode.GetAllSchedulableNodes(virtCli).Items
+			for _, node := range nodeList {
+				libnode.SetNodeUnschedulable(node.Name, virtCli)
 			}
-
-			// select one node from result for test, first node will do
-			selectedNodeName = nodes[0].Name
-
-			eventuallyWithTimeout(addLabelToSelectedNode)
-			eventuallyWithTimeout(addNodeSelectorToDeployments)
-
-			time.Sleep(WaitSecondsBeforeDeploymentCheck)
-
-			eventuallyWithTimeout(checkControlPlanePodsHaveNodeSelector)
 			eventuallyWithTimeout(waitForDeploymentsToStabilize)
-
-			setSelectedNodeUnschedulable()
 		})
-
-		removeNodeSelectorFromDeployments := func() (bool, error) {
-			for _, deploymentName := range controlPlaneDeploymentNames {
-				deployment, err := deploymentsClient.Get(deploymentName, metav1.GetOptions{})
-				if err != nil {
-					return false, err
-				}
-				delete(deployment.Spec.Template.Spec.NodeSelector, labelKey)
-				_, err = deploymentsClient.Update(deployment)
-				if err != nil {
-					return false, err
-				}
-			}
-			return true, nil
-		}
-
-		// Clean up selectedNode: Remove label and make schedulable again
-		cleanUpSelectedNode := func() (bool, error) {
-			selectedNode, err := getSelectedNode()
-			if err != nil {
-				return false, err
-			}
-			selectedNode.Spec.Unschedulable = false
-			delete(selectedNode.Labels, labelKey)
-			_, err = virtCli.CoreV1().Nodes().Update(selectedNode)
-			if err != nil {
-				return false, err
-			}
-			return true, nil
-		}
-
-		checkControlPlanePodsDontHaveNodeSelector := func() (bool, error) {
-			podList, err := getPodList()
-			if err != nil {
-				return false, err
-			}
-			runningControlPlanePods := getRunningReadyPods(podList, controlPlaneDeploymentNames)
-			for _, pod := range runningControlPlanePods {
-				if _, ok := pod.Spec.NodeSelector[labelKey]; ok {
-					return false, fmt.Errorf("pod %s has still node selector %s", pod.Name, labelKey)
-				}
-			}
-			return true, nil
-		}
 
 		AfterEach(func() {
-			eventuallyWithTimeout(removeNodeSelectorFromDeployments)
-			eventuallyWithTimeout(cleanUpSelectedNode)
-
-			time.Sleep(WaitSecondsBeforeDeploymentCheck)
-
-			eventuallyWithTimeout(checkControlPlanePodsDontHaveNodeSelector)
+			for _, node := range nodeList {
+				libnode.SetNodeSchedulable(node.Name, virtCli)
+			}
 			eventuallyWithTimeout(waitForDeploymentsToStabilize)
 		})
 
-		When("evicting pods of control plane", func() {
-
-			test := func(podName string) {
-				By(fmt.Sprintf("Try to evict all pods %s from node %s\n", podName, selectedNodeName))
-				podList, err := getPodList()
-				Expect(err).ToNot(HaveOccurred())
-				runningPods := getRunningReadyPods(podList, []string{podName})
-				for index, pod := range runningPods {
-					err = virtCli.CoreV1().Pods(tests.KubeVirtInstallNamespace).Evict(&v1beta1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: pod.Name}})
-					if index < len(runningPods)-1 {
-						Expect(err).ToNot(HaveOccurred())
-					}
-				}
-				Expect(err).To(HaveOccurred(), "no error occurred on evict of last pod")
+		DescribeTable("evicting pods of control plane", func(podName string, isMultiReplica bool, msg string) {
+			if isMultiReplica {
+				checks.SkipIfSingleReplica(virtCli)
+			} else {
+				checks.SkipIfMultiReplica(virtCli)
 			}
-
-			It("[test_id:2830]last eviction should fail for virt-controller pods", func() { test("virt-controller") })
-			It("[test_id:2799]last eviction should fail for virt-api pods", func() { test("virt-api") })
-
-		})
-
+			By(fmt.Sprintf("Try to evict all pods %s\n", podName))
+			podList, err := getPodList()
+			Expect(err).ToNot(HaveOccurred())
+			runningPods := getRunningReadyPods(podList, []string{podName})
+			Expect(runningPods).ToNot(BeEmpty())
+			for index, pod := range runningPods {
+				err = virtCli.CoreV1().Pods(flags.KubeVirtInstallNamespace).EvictV1beta1(context.Background(), &v1beta1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: pod.Name}})
+				if index == len(runningPods)-1 {
+					if isMultiReplica {
+						Expect(err).To(HaveOccurred(), msg)
+					} else {
+						Expect(err).ToNot(HaveOccurred(), msg)
+					}
+				} else {
+					Expect(err).ToNot(HaveOccurred())
+				}
+			}
+		},
+			Entry("[test_id:2830]last eviction should fail for multi-replica virt-controller pods",
+				"virt-controller", multiReplica, "no error occurred on evict of last virt-controller pod"),
+			Entry("[test_id:2799]last eviction should fail for multi-replica virt-api pods",
+				"virt-api", multiReplica, "no error occurred on evict of last virt-api pod"),
+			Entry("eviction of single-replica virt-controller pod should succeed",
+				"virt-controller", singleReplica, "error occurred on eviction of single-replica virt-controller pod"),
+			Entry("eviction of multi-replica virt-api pod should succeed",
+				"virt-api", singleReplica, "error occurred on eviction of single-replica virt-api pod"),
+		)
 	})
 
 	Context("control plane components check", func() {
@@ -296,12 +189,14 @@ var _ = Describe("[ref_id:2717]KubeVirt control plane resilience", func() {
 		When("control plane pods are running", func() {
 
 			It("[test_id:2806]virt-controller and virt-api pods have a pod disruption budget", func() {
+				// Single replica deployments do not create PDBs
+				checks.SkipIfSingleReplica(virtCli)
 
+				deploymentsClient := virtCli.AppsV1().Deployments(flags.KubeVirtInstallNamespace)
 				By("check deployments")
-				deployments, err := deploymentsClient.List(metav1.ListOptions{})
+				deployments, err := deploymentsClient.List(context.Background(), metav1.ListOptions{})
 				Expect(err).ToNot(HaveOccurred())
-				expectedDeployments := []string{"virt-api", "virt-controller"}
-				for _, expectedDeployment := range expectedDeployments {
+				for _, expectedDeployment := range controlPlaneDeploymentNames {
 					found := false
 					for _, deployment := range deployments.Items {
 						if deployment.Name != expectedDeployment {
@@ -316,7 +211,7 @@ var _ = Describe("[ref_id:2717]KubeVirt control plane resilience", func() {
 				}
 
 				By("check pod disruption budgets exist")
-				podDisruptionBudgetList, err := virtCli.PolicyV1beta1().PodDisruptionBudgets(tests.KubeVirtInstallNamespace).List(metav1.ListOptions{})
+				podDisruptionBudgetList, err := virtCli.PolicyV1().PodDisruptionBudgets(flags.KubeVirtInstallNamespace).List(context.Background(), metav1.ListOptions{})
 				Expect(err).ToNot(HaveOccurred())
 				for _, controlPlaneDeploymentName := range controlPlaneDeploymentNames {
 					pdbName := controlPlaneDeploymentName + "-pdb"
@@ -336,6 +231,73 @@ var _ = Describe("[ref_id:2717]KubeVirt control plane resilience", func() {
 
 		})
 
+		When("Control plane pods temporarily lose connection to Kubernetes API", func() {
+			// virt-handler is the only component that has the tools to add blackhole routes for testing healthz. Ideally we would test all component healthz endpoints.
+			componentName := "virt-handler"
+
+			getVirtHandler := func() *v1.DaemonSet {
+				daemonSet, err := virtCli.AppsV1().DaemonSets(flags.KubeVirtInstallNamespace).Get(context.Background(), componentName, metav1.GetOptions{})
+				ExpectWithOffset(1, err).NotTo(HaveOccurred())
+				return daemonSet
+			}
+
+			readyFunc := func() int32 {
+				return getVirtHandler().Status.NumberReady
+			}
+
+			blackHolePodFunc := func(addOrDel string) {
+				pods, err := virtCli.CoreV1().Pods(flags.KubeVirtInstallNamespace).List(context.Background(), metav1.ListOptions{LabelSelector: fmt.Sprintf("kubevirt.io=%s", componentName)})
+				Expect(err).NotTo(HaveOccurred())
+
+				serviceIp, err := getKubernetesApiServiceIp(virtCli)
+				Expect(err).NotTo(HaveOccurred())
+
+				for _, pod := range pods.Items {
+					_, err = exec.ExecuteCommandOnPod(virtCli, &pod, componentName, []string{"ip", "route", addOrDel, "blackhole", serviceIp})
+					Expect(err).NotTo(HaveOccurred())
+				}
+			}
+
+			It("should fail health checks when connectivity is lost, and recover when connectivity is regained", func() {
+				desiredDeamonsSetCount := getVirtHandler().Status.DesiredNumberScheduled
+
+				By("ensuring we have ready pods")
+				Eventually(readyFunc, 30*time.Second, time.Second).Should(BeNumerically(">", 0))
+
+				By("blocking connection to API on pods")
+				blackHolePodFunc("add")
+
+				By("ensuring we no longer have a ready pod")
+				Eventually(readyFunc, 120*time.Second, time.Second).Should(BeNumerically("==", 0))
+
+				By("removing blockage to API")
+				blackHolePodFunc("del")
+
+				By("ensuring we now have a ready virt-handler daemonset")
+				Eventually(readyFunc, 30*time.Second, time.Second).Should(BeNumerically("==", desiredDeamonsSetCount))
+
+				By("changing a setting and ensuring that the config update watcher eventually resumes and picks it up")
+				migrationBandwidth := resource.MustParse("1Mi")
+				kv := util.GetCurrentKv(virtCli)
+				kv.Spec.Configuration.MigrationConfiguration = &k6sv1.MigrationConfiguration{
+					BandwidthPerMigration: &migrationBandwidth,
+				}
+				kv = testsuite.UpdateKubeVirtConfigValue(kv.Spec.Configuration)
+				tests.WaitForConfigToBePropagatedToComponent("kubevirt.io=virt-handler", kv.ResourceVersion, tests.ExpectResourceVersionToBeLessEqualThanConfigVersion, 60*time.Second)
+			})
+		})
+
 	})
 
 })
+
+func getKubernetesApiServiceIp(virtClient kubecli.KubevirtClient) (string, error) {
+	kubernetesServiceName := "kubernetes"
+	kubernetesServiceNamespace := "default"
+
+	kubernetesService, err := virtClient.CoreV1().Services(kubernetesServiceNamespace).Get(context.Background(), kubernetesServiceName, metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+	return kubernetesService.Spec.ClusterIP, nil
+}

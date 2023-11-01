@@ -20,13 +20,24 @@
 set -e
 
 source hack/common.sh
+source hack/bootstrap.sh
 source hack/config.sh
 
 # vars are uninteresting for the build step, they are interesting for the push step only
+
 bazel build \
     --config=${ARCHITECTURE} \
     --define container_prefix= \
     --define image_prefix= \
     --define container_tag= \
     //:build-other-images //cmd/virt-operator:virt-operator-image //cmd/virt-api:virt-api-image \
-    //cmd/virt-controller:virt-controller-image //cmd/virt-handler:virt-handler-image //cmd/virt-launcher:virt-launcher-image
+    //cmd/virt-controller:virt-controller-image //cmd/virt-handler:virt-handler-image //cmd/virt-launcher:virt-launcher-image //cmd/libguestfs:libguestfs-tools-image //cmd/pr-helper:pr-helper //tests:conformance_image
+
+rm -rf ${DIGESTS_DIR}/${ARCHITECTURE}
+mkdir -p ${DIGESTS_DIR}/${ARCHITECTURE}
+
+for f in $(find bazel-bin/ -name '*.digest'); do
+    dir=${DIGESTS_DIR}/${ARCHITECTURE}/$(dirname $f)
+    mkdir -p ${dir}
+    cp -f ${f} ${dir}/$(basename ${f})
+done

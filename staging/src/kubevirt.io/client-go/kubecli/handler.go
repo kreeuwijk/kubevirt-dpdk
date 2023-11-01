@@ -1,11 +1,10 @@
 package kubecli
 
 import (
-	"crypto/tls"
+	"context"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
-	"time"
 
 	v1 "k8s.io/api/core/v1"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -13,23 +12,30 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	netutils "k8s.io/utils/net"
 
-	virtv1 "kubevirt.io/client-go/api/v1"
+	virtv1 "kubevirt.io/api/core/v1"
+
 	"kubevirt.io/client-go/util"
 )
 
 const (
 	consoleTemplateURI        = "wss://%s:%v/v1/namespaces/%s/virtualmachineinstances/%s/console"
+	usbredirTemplateURI       = "wss://%s:%v/v1/namespaces/%s/virtualmachineinstances/%s/usbredir"
 	vncTemplateURI            = "wss://%s:%v/v1/namespaces/%s/virtualmachineinstances/%s/vnc"
+	vsockTemplateURI          = "wss://%s:%v/v1/namespaces/%s/virtualmachineinstances/%s/vsock"
 	pauseTemplateURI          = "https://%s:%v/v1/namespaces/%s/virtualmachineinstances/%s/pause"
 	unpauseTemplateURI        = "https://%s:%v/v1/namespaces/%s/virtualmachineinstances/%s/unpause"
+	freezeTemplateURI         = "https://%s:%v/v1/namespaces/%s/virtualmachineinstances/%s/freeze"
+	unfreezeTemplateURI       = "https://%s:%v/v1/namespaces/%s/virtualmachineinstances/%s/unfreeze"
+	softRebootTemplateURI     = "https://%s:%v/v1/namespaces/%s/virtualmachineinstances/%s/softreboot"
 	guestInfoTemplateURI      = "https://%s:%v/v1/namespaces/%s/virtualmachineinstances/%s/guestosinfo"
 	userListTemplateURI       = "https://%s:%v/v1/namespaces/%s/virtualmachineinstances/%s/userlist"
 	filesystemListTemplateURI = "https://%s:%v/v1/namespaces/%s/virtualmachineinstances/%s/filesystemlist"
 )
 
-func NewVirtHandlerClient(client KubevirtClient) VirtHandlerClient {
+func NewVirtHandlerClient(virtCli KubevirtClient, httpCli *http.Client) VirtHandlerClient {
 	return &virtHandler{
-		client:          client,
+		virtCli:         virtCli,
+		httpCli:         httpCli,
 		virtHandlerPort: 0,
 		namespace:       "",
 	}
@@ -44,27 +50,34 @@ type VirtHandlerClient interface {
 type VirtHandlerConn interface {
 	ConnectionDetails() (ip string, port int, err error)
 	ConsoleURI(vmi *virtv1.VirtualMachineInstance) (string, error)
+	USBRedirURI(vmi *virtv1.VirtualMachineInstance) (string, error)
 	VNCURI(vmi *virtv1.VirtualMachineInstance) (string, error)
+	VSOCKURI(vmi *virtv1.VirtualMachineInstance, port string, tls string) (string, error)
 	PauseURI(vmi *virtv1.VirtualMachineInstance) (string, error)
 	UnpauseURI(vmi *virtv1.VirtualMachineInstance) (string, error)
+	FreezeURI(vmi *virtv1.VirtualMachineInstance) (string, error)
+	UnfreezeURI(vmi *virtv1.VirtualMachineInstance) (string, error)
+	SoftRebootURI(vmi *virtv1.VirtualMachineInstance) (string, error)
 	Pod() (pod *v1.Pod, err error)
-	Put(url string, tlsConfig *tls.Config) error
-	Get(url string, tlsConfig *tls.Config) (string, error)
+	Put(url string, body io.ReadCloser) error
+	Get(url string) (string, error)
 	GuestInfoURI(vmi *virtv1.VirtualMachineInstance) (string, error)
 	UserListURI(vmi *virtv1.VirtualMachineInstance) (string, error)
 	FilesystemListURI(vmi *virtv1.VirtualMachineInstance) (string, error)
 }
 
 type virtHandler struct {
-	client          KubevirtClient
+	virtCli         KubevirtClient
+	httpCli         *http.Client
 	virtHandlerPort int
 	namespace       string
 }
 
 type virtHandlerConn struct {
-	pod  *v1.Pod
-	err  error
-	port int
+	pod        *v1.Pod
+	err        error
+	port       int
+	httpClient *http.Client
 }
 
 func (v *virtHandler) Namespace(namespace string) VirtHandlerClient {
@@ -77,8 +90,12 @@ func (v *virtHandler) Port(port int) VirtHandlerClient {
 	return v
 }
 func (v *virtHandler) ForNode(nodeName string) VirtHandlerConn {
-	conn := &virtHandlerConn{}
 	var err error
+
+	conn := &virtHandlerConn{
+		httpClient: v.httpCli,
+	}
+
 	namespace := v.namespace
 	if namespace == "" {
 		namespace, err = util.GetNamespace()
@@ -107,7 +124,7 @@ func (v *virtHandler) getVirtHandler(nodeName string, namespace string) (*v1.Pod
 		return nil, false, err
 	}
 
-	pods, err := v.client.CoreV1().Pods(namespace).List(
+	pods, err := v.virtCli.CoreV1().Pods(namespace).List(context.Background(),
 		k8smetav1.ListOptions{
 			FieldSelector: handlerNodeSelector.String(),
 			LabelSelector: labelSelector.String()})
@@ -139,41 +156,54 @@ func (v *virtHandlerConn) ConnectionDetails() (ip string, port int, err error) {
 	return
 }
 
-//TODO move the actual ws handling in here, and work with channels
-func (v *virtHandlerConn) ConsoleURI(vmi *virtv1.VirtualMachineInstance) (string, error) {
+func (v *virtHandlerConn) formatURI(template string, vmi *virtv1.VirtualMachineInstance) (string, error) {
 	ip, port, err := v.ConnectionDetails()
 	if err != nil {
 		return "", err
 	}
 
-	return fmt.Sprintf(consoleTemplateURI, formatIpForUri(ip), port, vmi.ObjectMeta.Namespace, vmi.ObjectMeta.Name), nil
+	return fmt.Sprintf(template, formatIpForUri(ip), port, vmi.ObjectMeta.Namespace, vmi.ObjectMeta.Name), nil
+}
+
+// TODO move the actual ws handling in here, and work with channels
+func (v *virtHandlerConn) ConsoleURI(vmi *virtv1.VirtualMachineInstance) (string, error) {
+	return v.formatURI(consoleTemplateURI, vmi)
+}
+
+func (v *virtHandlerConn) USBRedirURI(vmi *virtv1.VirtualMachineInstance) (string, error) {
+	return v.formatURI(usbredirTemplateURI, vmi)
 }
 
 func (v *virtHandlerConn) VNCURI(vmi *virtv1.VirtualMachineInstance) (string, error) {
-	ip, port, err := v.ConnectionDetails()
+	return v.formatURI(vncTemplateURI, vmi)
+}
+
+func (v *virtHandlerConn) VSOCKURI(vmi *virtv1.VirtualMachineInstance, port string, tls string) (string, error) {
+	baseURI, err := v.formatURI(vsockTemplateURI, vmi)
 	if err != nil {
 		return "", err
 	}
+	return fmt.Sprintf("%s?port=%s&tls=%s", baseURI, port, tls), nil
+}
 
-	return fmt.Sprintf(vncTemplateURI, formatIpForUri(ip), port, vmi.ObjectMeta.Namespace, vmi.ObjectMeta.Name), nil
+func (v *virtHandlerConn) FreezeURI(vmi *virtv1.VirtualMachineInstance) (string, error) {
+	return v.formatURI(freezeTemplateURI, vmi)
+}
+
+func (v *virtHandlerConn) UnfreezeURI(vmi *virtv1.VirtualMachineInstance) (string, error) {
+	return v.formatURI(unfreezeTemplateURI, vmi)
+}
+
+func (v *virtHandlerConn) SoftRebootURI(vmi *virtv1.VirtualMachineInstance) (string, error) {
+	return v.formatURI(softRebootTemplateURI, vmi)
 }
 
 func (v *virtHandlerConn) PauseURI(vmi *virtv1.VirtualMachineInstance) (string, error) {
-	ip, port, err := v.ConnectionDetails()
-	if err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf(pauseTemplateURI, formatIpForUri(ip), port, vmi.ObjectMeta.Namespace, vmi.ObjectMeta.Name), nil
+	return v.formatURI(pauseTemplateURI, vmi)
 }
 
 func (v *virtHandlerConn) UnpauseURI(vmi *virtv1.VirtualMachineInstance) (string, error) {
-	ip, port, err := v.ConnectionDetails()
-	if err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf(unpauseTemplateURI, formatIpForUri(ip), port, vmi.ObjectMeta.Namespace, vmi.ObjectMeta.Name), nil
+	return v.formatURI(unpauseTemplateURI, vmi)
 }
 
 func (v *virtHandlerConn) Pod() (pod *v1.Pod, err error) {
@@ -184,74 +214,56 @@ func (v *virtHandlerConn) Pod() (pod *v1.Pod, err error) {
 	return v.pod, err
 }
 
-func (v *virtHandlerConn) Put(url string, tlsConfig *tls.Config) error {
-
-	client := http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: tlsConfig,
-		},
-		Timeout: 10 * time.Second,
-	}
-
-	req, err := http.NewRequest(http.MethodPut, url, nil)
+func (v *virtHandlerConn) doRequest(req *http.Request) (response string, err error) {
+	resp, err := v.httpClient.Do(req)
 	if err != nil {
-		return err
+		return
 	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("unexpected return code %s", resp.Status)
+		return "", fmt.Errorf("unexpected return code %d (%s)", resp.StatusCode, resp.Status)
+	}
+
+	responseBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("cannot read response body %v", err)
+	}
+
+	return string(responseBytes), nil
+}
+
+func (v *virtHandlerConn) Put(url string, body io.ReadCloser) error {
+	req, err := http.NewRequest(http.MethodPut, url, body)
+	if err != nil {
+		return err
+	}
+
+	_, err = v.doRequest(req)
+	if err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (v *virtHandlerConn) Get(url string, tlsConfig *tls.Config) (string, error) {
-
-	client := http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: tlsConfig,
-		},
-		Timeout: 10 * time.Second,
-	}
-
+func (v *virtHandlerConn) Get(url string) (string, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
 	}
 
 	req.Header.Add("Accept", "application/json")
-	resp, err := client.Do(req)
+	response, err := v.doRequest(req)
 	if err != nil {
 		return "", err
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return "", fmt.Errorf("unexpected return code %s", resp.Status)
-	}
-
-	defer resp.Body.Close()
-	responseData, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("cannot read get body %s", resp.Status)
-	}
-
-	responseString := string(responseData)
-
-	return responseString, nil
+	return response, nil
 }
 
 func (v *virtHandlerConn) GuestInfoURI(vmi *virtv1.VirtualMachineInstance) (string, error) {
-	ip, port, err := v.ConnectionDetails()
-	if err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf(guestInfoTemplateURI, formatIpForUri(ip), port, vmi.ObjectMeta.Namespace, vmi.ObjectMeta.Name), nil
+	return v.formatURI(guestInfoTemplateURI, vmi)
 }
 
 func formatIpForUri(ip string) string {
@@ -262,17 +274,9 @@ func formatIpForUri(ip string) string {
 }
 
 func (v *virtHandlerConn) UserListURI(vmi *virtv1.VirtualMachineInstance) (string, error) {
-	ip, port, err := v.ConnectionDetails()
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf(userListTemplateURI, formatIpForUri(ip), port, vmi.ObjectMeta.Namespace, vmi.ObjectMeta.Name), nil
+	return v.formatURI(userListTemplateURI, vmi)
 }
 
 func (v *virtHandlerConn) FilesystemListURI(vmi *virtv1.VirtualMachineInstance) (string, error) {
-	ip, port, err := v.ConnectionDetails()
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf(filesystemListTemplateURI, formatIpForUri(ip), port, vmi.ObjectMeta.Namespace, vmi.ObjectMeta.Name), nil
+	return v.formatURI(filesystemListTemplateURI, vmi)
 }

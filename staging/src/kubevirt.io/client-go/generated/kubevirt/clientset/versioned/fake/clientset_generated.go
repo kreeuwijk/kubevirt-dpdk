@@ -1,5 +1,5 @@
 /*
-Copyright 2020 The KubeVirt Authors.
+Copyright 2023 The KubeVirt Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -24,8 +24,21 @@ import (
 	"k8s.io/client-go/discovery"
 	fakediscovery "k8s.io/client-go/discovery/fake"
 	"k8s.io/client-go/testing"
-
 	clientset "kubevirt.io/client-go/generated/kubevirt/clientset/versioned"
+	clonev1alpha1 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/clone/v1alpha1"
+	fakeclonev1alpha1 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/clone/v1alpha1/fake"
+	exportv1alpha1 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/export/v1alpha1"
+	fakeexportv1alpha1 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/export/v1alpha1/fake"
+	instancetypev1alpha1 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/instancetype/v1alpha1"
+	fakeinstancetypev1alpha1 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/instancetype/v1alpha1/fake"
+	instancetypev1alpha2 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/instancetype/v1alpha2"
+	fakeinstancetypev1alpha2 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/instancetype/v1alpha2/fake"
+	instancetypev1beta1 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/instancetype/v1beta1"
+	fakeinstancetypev1beta1 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/instancetype/v1beta1/fake"
+	migrationsv1alpha1 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/migrations/v1alpha1"
+	fakemigrationsv1alpha1 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/migrations/v1alpha1/fake"
+	poolv1alpha1 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/pool/v1alpha1"
+	fakepoolv1alpha1 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/pool/v1alpha1/fake"
 	snapshotv1alpha1 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/snapshot/v1alpha1"
 	fakesnapshotv1alpha1 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/snapshot/v1alpha1/fake"
 )
@@ -76,6 +89,41 @@ func (c *Clientset) Tracker() testing.ObjectTracker {
 }
 
 var _ clientset.Interface = &Clientset{}
+
+// CloneV1alpha1 retrieves the CloneV1alpha1Client
+func (c *Clientset) CloneV1alpha1() clonev1alpha1.CloneV1alpha1Interface {
+	return &fakeclonev1alpha1.FakeCloneV1alpha1{Fake: &c.Fake}
+}
+
+// ExportV1alpha1 retrieves the ExportV1alpha1Client
+func (c *Clientset) ExportV1alpha1() exportv1alpha1.ExportV1alpha1Interface {
+	return &fakeexportv1alpha1.FakeExportV1alpha1{Fake: &c.Fake}
+}
+
+// InstancetypeV1alpha1 retrieves the InstancetypeV1alpha1Client
+func (c *Clientset) InstancetypeV1alpha1() instancetypev1alpha1.InstancetypeV1alpha1Interface {
+	return &fakeinstancetypev1alpha1.FakeInstancetypeV1alpha1{Fake: &c.Fake}
+}
+
+// InstancetypeV1alpha2 retrieves the InstancetypeV1alpha2Client
+func (c *Clientset) InstancetypeV1alpha2() instancetypev1alpha2.InstancetypeV1alpha2Interface {
+	return &fakeinstancetypev1alpha2.FakeInstancetypeV1alpha2{Fake: &c.Fake}
+}
+
+// InstancetypeV1beta1 retrieves the InstancetypeV1beta1Client
+func (c *Clientset) InstancetypeV1beta1() instancetypev1beta1.InstancetypeV1beta1Interface {
+	return &fakeinstancetypev1beta1.FakeInstancetypeV1beta1{Fake: &c.Fake}
+}
+
+// MigrationsV1alpha1 retrieves the MigrationsV1alpha1Client
+func (c *Clientset) MigrationsV1alpha1() migrationsv1alpha1.MigrationsV1alpha1Interface {
+	return &fakemigrationsv1alpha1.FakeMigrationsV1alpha1{Fake: &c.Fake}
+}
+
+// PoolV1alpha1 retrieves the PoolV1alpha1Client
+func (c *Clientset) PoolV1alpha1() poolv1alpha1.PoolV1alpha1Interface {
+	return &fakepoolv1alpha1.FakePoolV1alpha1{Fake: &c.Fake}
+}
 
 // SnapshotV1alpha1 retrieves the SnapshotV1alpha1Client
 func (c *Clientset) SnapshotV1alpha1() snapshotv1alpha1.SnapshotV1alpha1Interface {

@@ -16,6 +16,7 @@ go_library(
 go_binary(
     name = "virt-operator",
     embed = [":go_default_library"],
+    static = "on",
     visibility = ["//visibility:public"],
 )
 
@@ -34,7 +35,7 @@ container_image(
 container_image(
     name = "virt-operator-image",
     architecture = select({
-        "@io_bazel_rules_go//go/platform:linux_ppc64le": "ppc64le",
+        "@io_bazel_rules_go//go/platform:linux_arm64": "arm64",
         "//conditions:default": "amd64",
     }),
     base = ":version-container",

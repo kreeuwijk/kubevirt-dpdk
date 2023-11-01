@@ -5,14 +5,26 @@
 Package v1 is a generated protocol buffer package.
 
 It is generated from these files:
+
 	pkg/handler-launcher-com/cmd/v1/cmd.proto
 
 It has these top-level messages:
+
+	QemuVersionResponse
 	VMI
+	CPU
+	Sibling
+	Pages
+	Memory
+	Cell
+	Topology
 	SMBios
+	DiskInfo
+	ClusterConfig
 	VirtualMachineOptions
 	VMIRequest
 	MigrationRequest
+	ExecRequest
 	EmptyRequest
 	Response
 	DomainResponse
@@ -20,6 +32,11 @@ It has these top-level messages:
 	GuestInfoResponse
 	GuestUserListResponse
 	GuestFilesystemsResponse
+	ExecResponse
+	GuestPingRequest
+	GuestPingResponse
+	FreezeRequest
+	MemoryDumpRequest
 */
 package v1
 
@@ -46,6 +63,30 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.ProtoPackageIsVersion2 // please upgrade the proto package
 
+type QemuVersionResponse struct {
+	Response *Response `protobuf:"bytes,1,opt,name=response" json:"response,omitempty"`
+	Version  string    `protobuf:"bytes,2,opt,name=version" json:"version,omitempty"`
+}
+
+func (m *QemuVersionResponse) Reset()                    { *m = QemuVersionResponse{} }
+func (m *QemuVersionResponse) String() string            { return proto.CompactTextString(m) }
+func (*QemuVersionResponse) ProtoMessage()               {}
+func (*QemuVersionResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{0} }
+
+func (m *QemuVersionResponse) GetResponse() *Response {
+	if m != nil {
+		return m.Response
+	}
+	return nil
+}
+
+func (m *QemuVersionResponse) GetVersion() string {
+	if m != nil {
+		return m.Version
+	}
+	return ""
+}
+
 type VMI struct {
 	VmiJson []byte `protobuf:"bytes,1,opt,name=vmiJson,proto3" json:"vmiJson,omitempty"`
 }
@@ -53,11 +94,179 @@ type VMI struct {
 func (m *VMI) Reset()                    { *m = VMI{} }
 func (m *VMI) String() string            { return proto.CompactTextString(m) }
 func (*VMI) ProtoMessage()               {}
-func (*VMI) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{0} }
+func (*VMI) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{1} }
 
 func (m *VMI) GetVmiJson() []byte {
 	if m != nil {
 		return m.VmiJson
+	}
+	return nil
+}
+
+type CPU struct {
+	Id       uint32   `protobuf:"varint,1,opt,name=id" json:"id,omitempty"`
+	Siblings []uint32 `protobuf:"varint,2,rep,packed,name=siblings" json:"siblings,omitempty"`
+}
+
+func (m *CPU) Reset()                    { *m = CPU{} }
+func (m *CPU) String() string            { return proto.CompactTextString(m) }
+func (*CPU) ProtoMessage()               {}
+func (*CPU) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{2} }
+
+func (m *CPU) GetId() uint32 {
+	if m != nil {
+		return m.Id
+	}
+	return 0
+}
+
+func (m *CPU) GetSiblings() []uint32 {
+	if m != nil {
+		return m.Siblings
+	}
+	return nil
+}
+
+type Sibling struct {
+	Id    uint32 `protobuf:"varint,1,opt,name=id" json:"id,omitempty"`
+	Value uint64 `protobuf:"varint,2,opt,name=value" json:"value,omitempty"`
+}
+
+func (m *Sibling) Reset()                    { *m = Sibling{} }
+func (m *Sibling) String() string            { return proto.CompactTextString(m) }
+func (*Sibling) ProtoMessage()               {}
+func (*Sibling) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{3} }
+
+func (m *Sibling) GetId() uint32 {
+	if m != nil {
+		return m.Id
+	}
+	return 0
+}
+
+func (m *Sibling) GetValue() uint64 {
+	if m != nil {
+		return m.Value
+	}
+	return 0
+}
+
+type Pages struct {
+	Count uint64 `protobuf:"varint,1,opt,name=count" json:"count,omitempty"`
+	Unit  string `protobuf:"bytes,2,opt,name=unit" json:"unit,omitempty"`
+	Size  uint32 `protobuf:"varint,3,opt,name=size" json:"size,omitempty"`
+}
+
+func (m *Pages) Reset()                    { *m = Pages{} }
+func (m *Pages) String() string            { return proto.CompactTextString(m) }
+func (*Pages) ProtoMessage()               {}
+func (*Pages) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{4} }
+
+func (m *Pages) GetCount() uint64 {
+	if m != nil {
+		return m.Count
+	}
+	return 0
+}
+
+func (m *Pages) GetUnit() string {
+	if m != nil {
+		return m.Unit
+	}
+	return ""
+}
+
+func (m *Pages) GetSize() uint32 {
+	if m != nil {
+		return m.Size
+	}
+	return 0
+}
+
+type Memory struct {
+	Amount uint64 `protobuf:"varint,1,opt,name=amount" json:"amount,omitempty"`
+	Unit   string `protobuf:"bytes,2,opt,name=unit" json:"unit,omitempty"`
+}
+
+func (m *Memory) Reset()                    { *m = Memory{} }
+func (m *Memory) String() string            { return proto.CompactTextString(m) }
+func (*Memory) ProtoMessage()               {}
+func (*Memory) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{5} }
+
+func (m *Memory) GetAmount() uint64 {
+	if m != nil {
+		return m.Amount
+	}
+	return 0
+}
+
+func (m *Memory) GetUnit() string {
+	if m != nil {
+		return m.Unit
+	}
+	return ""
+}
+
+type Cell struct {
+	Id        uint32     `protobuf:"varint,1,opt,name=id" json:"id,omitempty"`
+	Memory    *Memory    `protobuf:"bytes,2,opt,name=memory" json:"memory,omitempty"`
+	Pages     []*Pages   `protobuf:"bytes,3,rep,name=pages" json:"pages,omitempty"`
+	Distances []*Sibling `protobuf:"bytes,4,rep,name=distances" json:"distances,omitempty"`
+	Cpus      []*CPU     `protobuf:"bytes,5,rep,name=cpus" json:"cpus,omitempty"`
+}
+
+func (m *Cell) Reset()                    { *m = Cell{} }
+func (m *Cell) String() string            { return proto.CompactTextString(m) }
+func (*Cell) ProtoMessage()               {}
+func (*Cell) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{6} }
+
+func (m *Cell) GetId() uint32 {
+	if m != nil {
+		return m.Id
+	}
+	return 0
+}
+
+func (m *Cell) GetMemory() *Memory {
+	if m != nil {
+		return m.Memory
+	}
+	return nil
+}
+
+func (m *Cell) GetPages() []*Pages {
+	if m != nil {
+		return m.Pages
+	}
+	return nil
+}
+
+func (m *Cell) GetDistances() []*Sibling {
+	if m != nil {
+		return m.Distances
+	}
+	return nil
+}
+
+func (m *Cell) GetCpus() []*CPU {
+	if m != nil {
+		return m.Cpus
+	}
+	return nil
+}
+
+type Topology struct {
+	NumaCells []*Cell `protobuf:"bytes,1,rep,name=numa_cells,json=numaCells" json:"numa_cells,omitempty"`
+}
+
+func (m *Topology) Reset()                    { *m = Topology{} }
+func (m *Topology) String() string            { return proto.CompactTextString(m) }
+func (*Topology) ProtoMessage()               {}
+func (*Topology) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{7} }
+
+func (m *Topology) GetNumaCells() []*Cell {
+	if m != nil {
+		return m.NumaCells
 	}
 	return nil
 }
@@ -73,7 +282,7 @@ type SMBios struct {
 func (m *SMBios) Reset()                    { *m = SMBios{} }
 func (m *SMBios) String() string            { return proto.CompactTextString(m) }
 func (*SMBios) ProtoMessage()               {}
-func (*SMBios) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{1} }
+func (*SMBios) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{8} }
 
 func (m *SMBios) GetManufacturer() string {
 	if m != nil {
@@ -110,18 +319,131 @@ func (m *SMBios) GetFamily() string {
 	return ""
 }
 
+type DiskInfo struct {
+	Format      string `protobuf:"bytes,1,opt,name=format" json:"format,omitempty"`
+	BackingFile string `protobuf:"bytes,2,opt,name=backingFile" json:"backingFile,omitempty"`
+	ActualSize  uint64 `protobuf:"varint,3,opt,name=actualSize" json:"actualSize,omitempty"`
+	VirtualSize uint64 `protobuf:"varint,4,opt,name=virtualSize" json:"virtualSize,omitempty"`
+}
+
+func (m *DiskInfo) Reset()                    { *m = DiskInfo{} }
+func (m *DiskInfo) String() string            { return proto.CompactTextString(m) }
+func (*DiskInfo) ProtoMessage()               {}
+func (*DiskInfo) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{9} }
+
+func (m *DiskInfo) GetFormat() string {
+	if m != nil {
+		return m.Format
+	}
+	return ""
+}
+
+func (m *DiskInfo) GetBackingFile() string {
+	if m != nil {
+		return m.BackingFile
+	}
+	return ""
+}
+
+func (m *DiskInfo) GetActualSize() uint64 {
+	if m != nil {
+		return m.ActualSize
+	}
+	return 0
+}
+
+func (m *DiskInfo) GetVirtualSize() uint64 {
+	if m != nil {
+		return m.VirtualSize
+	}
+	return 0
+}
+
+type ClusterConfig struct {
+	ExpandDisksEnabled        bool `protobuf:"varint,1,opt,name=ExpandDisksEnabled" json:"ExpandDisksEnabled,omitempty"`
+	FreePageReportingDisabled bool `protobuf:"varint,2,opt,name=FreePageReportingDisabled" json:"FreePageReportingDisabled,omitempty"`
+}
+
+func (m *ClusterConfig) Reset()                    { *m = ClusterConfig{} }
+func (m *ClusterConfig) String() string            { return proto.CompactTextString(m) }
+func (*ClusterConfig) ProtoMessage()               {}
+func (*ClusterConfig) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{10} }
+
+func (m *ClusterConfig) GetExpandDisksEnabled() bool {
+	if m != nil {
+		return m.ExpandDisksEnabled
+	}
+	return false
+}
+
+func (m *ClusterConfig) GetFreePageReportingDisabled() bool {
+	if m != nil {
+		return m.FreePageReportingDisabled
+	}
+	return false
+}
+
 type VirtualMachineOptions struct {
-	VirtualMachineSMBios *SMBios `protobuf:"bytes,1,opt,name=VirtualMachineSMBios" json:"VirtualMachineSMBios,omitempty"`
+	VirtualMachineSMBios  *SMBios              `protobuf:"bytes,1,opt,name=VirtualMachineSMBios" json:"VirtualMachineSMBios,omitempty"`
+	MemBalloonStatsPeriod uint32               `protobuf:"varint,2,opt,name=MemBalloonStatsPeriod" json:"MemBalloonStatsPeriod,omitempty"`
+	PreallocatedVolumes   []string             `protobuf:"bytes,3,rep,name=PreallocatedVolumes" json:"PreallocatedVolumes,omitempty"`
+	Topology              *Topology            `protobuf:"bytes,4,opt,name=topology" json:"topology,omitempty"`
+	DisksInfo             map[string]*DiskInfo `protobuf:"bytes,5,rep,name=DisksInfo" json:"DisksInfo,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Deprecated, use clusterConfig.ExpandDisksEnabled
+	ExpandDisksEnabled bool           `protobuf:"varint,6,opt,name=ExpandDisksEnabled" json:"ExpandDisksEnabled,omitempty"`
+	ClusterConfig      *ClusterConfig `protobuf:"bytes,7,opt,name=clusterConfig" json:"clusterConfig,omitempty"`
 }
 
 func (m *VirtualMachineOptions) Reset()                    { *m = VirtualMachineOptions{} }
 func (m *VirtualMachineOptions) String() string            { return proto.CompactTextString(m) }
 func (*VirtualMachineOptions) ProtoMessage()               {}
-func (*VirtualMachineOptions) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{2} }
+func (*VirtualMachineOptions) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{11} }
 
 func (m *VirtualMachineOptions) GetVirtualMachineSMBios() *SMBios {
 	if m != nil {
 		return m.VirtualMachineSMBios
+	}
+	return nil
+}
+
+func (m *VirtualMachineOptions) GetMemBalloonStatsPeriod() uint32 {
+	if m != nil {
+		return m.MemBalloonStatsPeriod
+	}
+	return 0
+}
+
+func (m *VirtualMachineOptions) GetPreallocatedVolumes() []string {
+	if m != nil {
+		return m.PreallocatedVolumes
+	}
+	return nil
+}
+
+func (m *VirtualMachineOptions) GetTopology() *Topology {
+	if m != nil {
+		return m.Topology
+	}
+	return nil
+}
+
+func (m *VirtualMachineOptions) GetDisksInfo() map[string]*DiskInfo {
+	if m != nil {
+		return m.DisksInfo
+	}
+	return nil
+}
+
+func (m *VirtualMachineOptions) GetExpandDisksEnabled() bool {
+	if m != nil {
+		return m.ExpandDisksEnabled
+	}
+	return false
+}
+
+func (m *VirtualMachineOptions) GetClusterConfig() *ClusterConfig {
+	if m != nil {
+		return m.ClusterConfig
 	}
 	return nil
 }
@@ -134,7 +456,7 @@ type VMIRequest struct {
 func (m *VMIRequest) Reset()                    { *m = VMIRequest{} }
 func (m *VMIRequest) String() string            { return proto.CompactTextString(m) }
 func (*VMIRequest) ProtoMessage()               {}
-func (*VMIRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{3} }
+func (*VMIRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{12} }
 
 func (m *VMIRequest) GetVmi() *VMI {
 	if m != nil {
@@ -158,7 +480,7 @@ type MigrationRequest struct {
 func (m *MigrationRequest) Reset()                    { *m = MigrationRequest{} }
 func (m *MigrationRequest) String() string            { return proto.CompactTextString(m) }
 func (*MigrationRequest) ProtoMessage()               {}
-func (*MigrationRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{4} }
+func (*MigrationRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{13} }
 
 func (m *MigrationRequest) GetVmi() *VMI {
 	if m != nil {
@@ -174,13 +496,53 @@ func (m *MigrationRequest) GetOptions() []byte {
 	return nil
 }
 
+type ExecRequest struct {
+	DomainName     string   `protobuf:"bytes,1,opt,name=domainName" json:"domainName,omitempty"`
+	Command        string   `protobuf:"bytes,2,opt,name=Command" json:"Command,omitempty"`
+	Args           []string `protobuf:"bytes,3,rep,name=Args" json:"Args,omitempty"`
+	TimeoutSeconds int32    `protobuf:"varint,4,opt,name=timeoutSeconds" json:"timeoutSeconds,omitempty"`
+}
+
+func (m *ExecRequest) Reset()                    { *m = ExecRequest{} }
+func (m *ExecRequest) String() string            { return proto.CompactTextString(m) }
+func (*ExecRequest) ProtoMessage()               {}
+func (*ExecRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{14} }
+
+func (m *ExecRequest) GetDomainName() string {
+	if m != nil {
+		return m.DomainName
+	}
+	return ""
+}
+
+func (m *ExecRequest) GetCommand() string {
+	if m != nil {
+		return m.Command
+	}
+	return ""
+}
+
+func (m *ExecRequest) GetArgs() []string {
+	if m != nil {
+		return m.Args
+	}
+	return nil
+}
+
+func (m *ExecRequest) GetTimeoutSeconds() int32 {
+	if m != nil {
+		return m.TimeoutSeconds
+	}
+	return 0
+}
+
 type EmptyRequest struct {
 }
 
 func (m *EmptyRequest) Reset()                    { *m = EmptyRequest{} }
 func (m *EmptyRequest) String() string            { return proto.CompactTextString(m) }
 func (*EmptyRequest) ProtoMessage()               {}
-func (*EmptyRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{5} }
+func (*EmptyRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{15} }
 
 type Response struct {
 	Success bool   `protobuf:"varint,1,opt,name=success" json:"success,omitempty"`
@@ -190,7 +552,7 @@ type Response struct {
 func (m *Response) Reset()                    { *m = Response{} }
 func (m *Response) String() string            { return proto.CompactTextString(m) }
 func (*Response) ProtoMessage()               {}
-func (*Response) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{6} }
+func (*Response) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{16} }
 
 func (m *Response) GetSuccess() bool {
 	if m != nil {
@@ -214,7 +576,7 @@ type DomainResponse struct {
 func (m *DomainResponse) Reset()                    { *m = DomainResponse{} }
 func (m *DomainResponse) String() string            { return proto.CompactTextString(m) }
 func (*DomainResponse) ProtoMessage()               {}
-func (*DomainResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{7} }
+func (*DomainResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{17} }
 
 func (m *DomainResponse) GetResponse() *Response {
 	if m != nil {
@@ -238,7 +600,7 @@ type DomainStatsResponse struct {
 func (m *DomainStatsResponse) Reset()                    { *m = DomainStatsResponse{} }
 func (m *DomainStatsResponse) String() string            { return proto.CompactTextString(m) }
 func (*DomainStatsResponse) ProtoMessage()               {}
-func (*DomainStatsResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{8} }
+func (*DomainStatsResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{18} }
 
 func (m *DomainStatsResponse) GetResponse() *Response {
 	if m != nil {
@@ -262,7 +624,7 @@ type GuestInfoResponse struct {
 func (m *GuestInfoResponse) Reset()                    { *m = GuestInfoResponse{} }
 func (m *GuestInfoResponse) String() string            { return proto.CompactTextString(m) }
 func (*GuestInfoResponse) ProtoMessage()               {}
-func (*GuestInfoResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{9} }
+func (*GuestInfoResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{19} }
 
 func (m *GuestInfoResponse) GetResponse() *Response {
 	if m != nil {
@@ -286,7 +648,7 @@ type GuestUserListResponse struct {
 func (m *GuestUserListResponse) Reset()                    { *m = GuestUserListResponse{} }
 func (m *GuestUserListResponse) String() string            { return proto.CompactTextString(m) }
 func (*GuestUserListResponse) ProtoMessage()               {}
-func (*GuestUserListResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{10} }
+func (*GuestUserListResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{20} }
 
 func (m *GuestUserListResponse) GetResponse() *Response {
 	if m != nil {
@@ -310,7 +672,7 @@ type GuestFilesystemsResponse struct {
 func (m *GuestFilesystemsResponse) Reset()                    { *m = GuestFilesystemsResponse{} }
 func (m *GuestFilesystemsResponse) String() string            { return proto.CompactTextString(m) }
 func (*GuestFilesystemsResponse) ProtoMessage()               {}
-func (*GuestFilesystemsResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{11} }
+func (*GuestFilesystemsResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{21} }
 
 func (m *GuestFilesystemsResponse) GetResponse() *Response {
 	if m != nil {
@@ -326,12 +688,142 @@ func (m *GuestFilesystemsResponse) GetGuestFilesystemsResponse() string {
 	return ""
 }
 
+type ExecResponse struct {
+	Response *Response `protobuf:"bytes,1,opt,name=response" json:"response,omitempty"`
+	ExitCode int32     `protobuf:"varint,2,opt,name=exitCode" json:"exitCode,omitempty"`
+	StdOut   string    `protobuf:"bytes,3,opt,name=stdOut" json:"stdOut,omitempty"`
+}
+
+func (m *ExecResponse) Reset()                    { *m = ExecResponse{} }
+func (m *ExecResponse) String() string            { return proto.CompactTextString(m) }
+func (*ExecResponse) ProtoMessage()               {}
+func (*ExecResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{22} }
+
+func (m *ExecResponse) GetResponse() *Response {
+	if m != nil {
+		return m.Response
+	}
+	return nil
+}
+
+func (m *ExecResponse) GetExitCode() int32 {
+	if m != nil {
+		return m.ExitCode
+	}
+	return 0
+}
+
+func (m *ExecResponse) GetStdOut() string {
+	if m != nil {
+		return m.StdOut
+	}
+	return ""
+}
+
+type GuestPingRequest struct {
+	DomainName     string `protobuf:"bytes,1,opt,name=domainName" json:"domainName,omitempty"`
+	TimeoutSeconds int32  `protobuf:"varint,2,opt,name=timeoutSeconds" json:"timeoutSeconds,omitempty"`
+}
+
+func (m *GuestPingRequest) Reset()                    { *m = GuestPingRequest{} }
+func (m *GuestPingRequest) String() string            { return proto.CompactTextString(m) }
+func (*GuestPingRequest) ProtoMessage()               {}
+func (*GuestPingRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{23} }
+
+func (m *GuestPingRequest) GetDomainName() string {
+	if m != nil {
+		return m.DomainName
+	}
+	return ""
+}
+
+func (m *GuestPingRequest) GetTimeoutSeconds() int32 {
+	if m != nil {
+		return m.TimeoutSeconds
+	}
+	return 0
+}
+
+type GuestPingResponse struct {
+	Response *Response `protobuf:"bytes,1,opt,name=response" json:"response,omitempty"`
+}
+
+func (m *GuestPingResponse) Reset()                    { *m = GuestPingResponse{} }
+func (m *GuestPingResponse) String() string            { return proto.CompactTextString(m) }
+func (*GuestPingResponse) ProtoMessage()               {}
+func (*GuestPingResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{24} }
+
+func (m *GuestPingResponse) GetResponse() *Response {
+	if m != nil {
+		return m.Response
+	}
+	return nil
+}
+
+type FreezeRequest struct {
+	Vmi                    *VMI  `protobuf:"bytes,1,opt,name=vmi" json:"vmi,omitempty"`
+	UnfreezeTimeoutSeconds int32 `protobuf:"varint,2,opt,name=unfreezeTimeoutSeconds" json:"unfreezeTimeoutSeconds,omitempty"`
+}
+
+func (m *FreezeRequest) Reset()                    { *m = FreezeRequest{} }
+func (m *FreezeRequest) String() string            { return proto.CompactTextString(m) }
+func (*FreezeRequest) ProtoMessage()               {}
+func (*FreezeRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{25} }
+
+func (m *FreezeRequest) GetVmi() *VMI {
+	if m != nil {
+		return m.Vmi
+	}
+	return nil
+}
+
+func (m *FreezeRequest) GetUnfreezeTimeoutSeconds() int32 {
+	if m != nil {
+		return m.UnfreezeTimeoutSeconds
+	}
+	return 0
+}
+
+type MemoryDumpRequest struct {
+	Vmi      *VMI   `protobuf:"bytes,1,opt,name=vmi" json:"vmi,omitempty"`
+	DumpPath string `protobuf:"bytes,2,opt,name=dumpPath" json:"dumpPath,omitempty"`
+}
+
+func (m *MemoryDumpRequest) Reset()                    { *m = MemoryDumpRequest{} }
+func (m *MemoryDumpRequest) String() string            { return proto.CompactTextString(m) }
+func (*MemoryDumpRequest) ProtoMessage()               {}
+func (*MemoryDumpRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{26} }
+
+func (m *MemoryDumpRequest) GetVmi() *VMI {
+	if m != nil {
+		return m.Vmi
+	}
+	return nil
+}
+
+func (m *MemoryDumpRequest) GetDumpPath() string {
+	if m != nil {
+		return m.DumpPath
+	}
+	return ""
+}
+
 func init() {
+	proto.RegisterType((*QemuVersionResponse)(nil), "kubevirt.cmd.v1.QemuVersionResponse")
 	proto.RegisterType((*VMI)(nil), "kubevirt.cmd.v1.VMI")
+	proto.RegisterType((*CPU)(nil), "kubevirt.cmd.v1.CPU")
+	proto.RegisterType((*Sibling)(nil), "kubevirt.cmd.v1.Sibling")
+	proto.RegisterType((*Pages)(nil), "kubevirt.cmd.v1.Pages")
+	proto.RegisterType((*Memory)(nil), "kubevirt.cmd.v1.Memory")
+	proto.RegisterType((*Cell)(nil), "kubevirt.cmd.v1.Cell")
+	proto.RegisterType((*Topology)(nil), "kubevirt.cmd.v1.Topology")
 	proto.RegisterType((*SMBios)(nil), "kubevirt.cmd.v1.SMBios")
+	proto.RegisterType((*DiskInfo)(nil), "kubevirt.cmd.v1.DiskInfo")
+	proto.RegisterType((*ClusterConfig)(nil), "kubevirt.cmd.v1.ClusterConfig")
 	proto.RegisterType((*VirtualMachineOptions)(nil), "kubevirt.cmd.v1.VirtualMachineOptions")
 	proto.RegisterType((*VMIRequest)(nil), "kubevirt.cmd.v1.VMIRequest")
 	proto.RegisterType((*MigrationRequest)(nil), "kubevirt.cmd.v1.MigrationRequest")
+	proto.RegisterType((*ExecRequest)(nil), "kubevirt.cmd.v1.ExecRequest")
 	proto.RegisterType((*EmptyRequest)(nil), "kubevirt.cmd.v1.EmptyRequest")
 	proto.RegisterType((*Response)(nil), "kubevirt.cmd.v1.Response")
 	proto.RegisterType((*DomainResponse)(nil), "kubevirt.cmd.v1.DomainResponse")
@@ -339,6 +831,11 @@ func init() {
 	proto.RegisterType((*GuestInfoResponse)(nil), "kubevirt.cmd.v1.GuestInfoResponse")
 	proto.RegisterType((*GuestUserListResponse)(nil), "kubevirt.cmd.v1.GuestUserListResponse")
 	proto.RegisterType((*GuestFilesystemsResponse)(nil), "kubevirt.cmd.v1.GuestFilesystemsResponse")
+	proto.RegisterType((*ExecResponse)(nil), "kubevirt.cmd.v1.ExecResponse")
+	proto.RegisterType((*GuestPingRequest)(nil), "kubevirt.cmd.v1.GuestPingRequest")
+	proto.RegisterType((*GuestPingResponse)(nil), "kubevirt.cmd.v1.GuestPingResponse")
+	proto.RegisterType((*FreezeRequest)(nil), "kubevirt.cmd.v1.FreezeRequest")
+	proto.RegisterType((*MemoryDumpRequest)(nil), "kubevirt.cmd.v1.MemoryDumpRequest")
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -355,19 +852,29 @@ type CmdClient interface {
 	SyncVirtualMachine(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error)
 	PauseVirtualMachine(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error)
 	UnpauseVirtualMachine(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error)
+	FreezeVirtualMachine(ctx context.Context, in *FreezeRequest, opts ...grpc.CallOption) (*Response, error)
+	UnfreezeVirtualMachine(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error)
+	SoftRebootVirtualMachine(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error)
 	ShutdownVirtualMachine(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error)
 	KillVirtualMachine(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error)
 	DeleteVirtualMachine(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error)
 	MigrateVirtualMachine(ctx context.Context, in *MigrationRequest, opts ...grpc.CallOption) (*Response, error)
 	SyncMigrationTarget(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error)
 	CancelVirtualMachineMigration(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error)
-	SetVirtualMachineGuestTime(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error)
+	SignalTargetPodCleanup(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error)
+	FinalizeVirtualMachineMigration(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error)
+	HotplugHostDevices(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error)
 	GetDomain(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*DomainResponse, error)
 	GetDomainStats(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*DomainStatsResponse, error)
 	GetGuestInfo(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*GuestInfoResponse, error)
 	GetUsers(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*GuestUserListResponse, error)
 	GetFilesystems(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*GuestFilesystemsResponse, error)
 	Ping(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*Response, error)
+	Exec(ctx context.Context, in *ExecRequest, opts ...grpc.CallOption) (*ExecResponse, error)
+	GuestPing(ctx context.Context, in *GuestPingRequest, opts ...grpc.CallOption) (*GuestPingResponse, error)
+	VirtualMachineMemoryDump(ctx context.Context, in *MemoryDumpRequest, opts ...grpc.CallOption) (*Response, error)
+	GetQemuVersion(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*QemuVersionResponse, error)
+	SyncVirtualMachineCPUs(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error)
 }
 
 type cmdClient struct {
@@ -399,6 +906,33 @@ func (c *cmdClient) PauseVirtualMachine(ctx context.Context, in *VMIRequest, opt
 func (c *cmdClient) UnpauseVirtualMachine(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error) {
 	out := new(Response)
 	err := grpc.Invoke(ctx, "/kubevirt.cmd.v1.Cmd/UnpauseVirtualMachine", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cmdClient) FreezeVirtualMachine(ctx context.Context, in *FreezeRequest, opts ...grpc.CallOption) (*Response, error) {
+	out := new(Response)
+	err := grpc.Invoke(ctx, "/kubevirt.cmd.v1.Cmd/FreezeVirtualMachine", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cmdClient) UnfreezeVirtualMachine(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error) {
+	out := new(Response)
+	err := grpc.Invoke(ctx, "/kubevirt.cmd.v1.Cmd/UnfreezeVirtualMachine", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cmdClient) SoftRebootVirtualMachine(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error) {
+	out := new(Response)
+	err := grpc.Invoke(ctx, "/kubevirt.cmd.v1.Cmd/SoftRebootVirtualMachine", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -459,9 +993,27 @@ func (c *cmdClient) CancelVirtualMachineMigration(ctx context.Context, in *VMIRe
 	return out, nil
 }
 
-func (c *cmdClient) SetVirtualMachineGuestTime(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error) {
+func (c *cmdClient) SignalTargetPodCleanup(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error) {
 	out := new(Response)
-	err := grpc.Invoke(ctx, "/kubevirt.cmd.v1.Cmd/SetVirtualMachineGuestTime", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/kubevirt.cmd.v1.Cmd/SignalTargetPodCleanup", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cmdClient) FinalizeVirtualMachineMigration(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error) {
+	out := new(Response)
+	err := grpc.Invoke(ctx, "/kubevirt.cmd.v1.Cmd/FinalizeVirtualMachineMigration", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cmdClient) HotplugHostDevices(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error) {
+	out := new(Response)
+	err := grpc.Invoke(ctx, "/kubevirt.cmd.v1.Cmd/HotplugHostDevices", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -522,25 +1074,80 @@ func (c *cmdClient) Ping(ctx context.Context, in *EmptyRequest, opts ...grpc.Cal
 	return out, nil
 }
 
+func (c *cmdClient) Exec(ctx context.Context, in *ExecRequest, opts ...grpc.CallOption) (*ExecResponse, error) {
+	out := new(ExecResponse)
+	err := grpc.Invoke(ctx, "/kubevirt.cmd.v1.Cmd/Exec", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cmdClient) GuestPing(ctx context.Context, in *GuestPingRequest, opts ...grpc.CallOption) (*GuestPingResponse, error) {
+	out := new(GuestPingResponse)
+	err := grpc.Invoke(ctx, "/kubevirt.cmd.v1.Cmd/GuestPing", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cmdClient) VirtualMachineMemoryDump(ctx context.Context, in *MemoryDumpRequest, opts ...grpc.CallOption) (*Response, error) {
+	out := new(Response)
+	err := grpc.Invoke(ctx, "/kubevirt.cmd.v1.Cmd/VirtualMachineMemoryDump", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cmdClient) GetQemuVersion(ctx context.Context, in *EmptyRequest, opts ...grpc.CallOption) (*QemuVersionResponse, error) {
+	out := new(QemuVersionResponse)
+	err := grpc.Invoke(ctx, "/kubevirt.cmd.v1.Cmd/GetQemuVersion", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cmdClient) SyncVirtualMachineCPUs(ctx context.Context, in *VMIRequest, opts ...grpc.CallOption) (*Response, error) {
+	out := new(Response)
+	err := grpc.Invoke(ctx, "/kubevirt.cmd.v1.Cmd/SyncVirtualMachineCPUs", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Server API for Cmd service
 
 type CmdServer interface {
 	SyncVirtualMachine(context.Context, *VMIRequest) (*Response, error)
 	PauseVirtualMachine(context.Context, *VMIRequest) (*Response, error)
 	UnpauseVirtualMachine(context.Context, *VMIRequest) (*Response, error)
+	FreezeVirtualMachine(context.Context, *FreezeRequest) (*Response, error)
+	UnfreezeVirtualMachine(context.Context, *VMIRequest) (*Response, error)
+	SoftRebootVirtualMachine(context.Context, *VMIRequest) (*Response, error)
 	ShutdownVirtualMachine(context.Context, *VMIRequest) (*Response, error)
 	KillVirtualMachine(context.Context, *VMIRequest) (*Response, error)
 	DeleteVirtualMachine(context.Context, *VMIRequest) (*Response, error)
 	MigrateVirtualMachine(context.Context, *MigrationRequest) (*Response, error)
 	SyncMigrationTarget(context.Context, *VMIRequest) (*Response, error)
 	CancelVirtualMachineMigration(context.Context, *VMIRequest) (*Response, error)
-	SetVirtualMachineGuestTime(context.Context, *VMIRequest) (*Response, error)
+	SignalTargetPodCleanup(context.Context, *VMIRequest) (*Response, error)
+	FinalizeVirtualMachineMigration(context.Context, *VMIRequest) (*Response, error)
+	HotplugHostDevices(context.Context, *VMIRequest) (*Response, error)
 	GetDomain(context.Context, *EmptyRequest) (*DomainResponse, error)
 	GetDomainStats(context.Context, *EmptyRequest) (*DomainStatsResponse, error)
 	GetGuestInfo(context.Context, *EmptyRequest) (*GuestInfoResponse, error)
 	GetUsers(context.Context, *EmptyRequest) (*GuestUserListResponse, error)
 	GetFilesystems(context.Context, *EmptyRequest) (*GuestFilesystemsResponse, error)
 	Ping(context.Context, *EmptyRequest) (*Response, error)
+	Exec(context.Context, *ExecRequest) (*ExecResponse, error)
+	GuestPing(context.Context, *GuestPingRequest) (*GuestPingResponse, error)
+	VirtualMachineMemoryDump(context.Context, *MemoryDumpRequest) (*Response, error)
+	GetQemuVersion(context.Context, *EmptyRequest) (*QemuVersionResponse, error)
+	SyncVirtualMachineCPUs(context.Context, *VMIRequest) (*Response, error)
 }
 
 func RegisterCmdServer(s *grpc.Server, srv CmdServer) {
@@ -597,6 +1204,60 @@ func _Cmd_UnpauseVirtualMachine_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(CmdServer).UnpauseVirtualMachine(ctx, req.(*VMIRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Cmd_FreezeVirtualMachine_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FreezeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CmdServer).FreezeVirtualMachine(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/kubevirt.cmd.v1.Cmd/FreezeVirtualMachine",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CmdServer).FreezeVirtualMachine(ctx, req.(*FreezeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Cmd_UnfreezeVirtualMachine_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VMIRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CmdServer).UnfreezeVirtualMachine(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/kubevirt.cmd.v1.Cmd/UnfreezeVirtualMachine",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CmdServer).UnfreezeVirtualMachine(ctx, req.(*VMIRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Cmd_SoftRebootVirtualMachine_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VMIRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CmdServer).SoftRebootVirtualMachine(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/kubevirt.cmd.v1.Cmd/SoftRebootVirtualMachine",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CmdServer).SoftRebootVirtualMachine(ctx, req.(*VMIRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -709,20 +1370,56 @@ func _Cmd_CancelVirtualMachineMigration_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Cmd_SetVirtualMachineGuestTime_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Cmd_SignalTargetPodCleanup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(VMIRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CmdServer).SetVirtualMachineGuestTime(ctx, in)
+		return srv.(CmdServer).SignalTargetPodCleanup(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/kubevirt.cmd.v1.Cmd/SetVirtualMachineGuestTime",
+		FullMethod: "/kubevirt.cmd.v1.Cmd/SignalTargetPodCleanup",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CmdServer).SetVirtualMachineGuestTime(ctx, req.(*VMIRequest))
+		return srv.(CmdServer).SignalTargetPodCleanup(ctx, req.(*VMIRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Cmd_FinalizeVirtualMachineMigration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VMIRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CmdServer).FinalizeVirtualMachineMigration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/kubevirt.cmd.v1.Cmd/FinalizeVirtualMachineMigration",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CmdServer).FinalizeVirtualMachineMigration(ctx, req.(*VMIRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Cmd_HotplugHostDevices_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VMIRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CmdServer).HotplugHostDevices(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/kubevirt.cmd.v1.Cmd/HotplugHostDevices",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CmdServer).HotplugHostDevices(ctx, req.(*VMIRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -835,6 +1532,96 @@ func _Cmd_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface{
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Cmd_Exec_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExecRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CmdServer).Exec(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/kubevirt.cmd.v1.Cmd/Exec",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CmdServer).Exec(ctx, req.(*ExecRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Cmd_GuestPing_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GuestPingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CmdServer).GuestPing(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/kubevirt.cmd.v1.Cmd/GuestPing",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CmdServer).GuestPing(ctx, req.(*GuestPingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Cmd_VirtualMachineMemoryDump_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MemoryDumpRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CmdServer).VirtualMachineMemoryDump(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/kubevirt.cmd.v1.Cmd/VirtualMachineMemoryDump",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CmdServer).VirtualMachineMemoryDump(ctx, req.(*MemoryDumpRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Cmd_GetQemuVersion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EmptyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CmdServer).GetQemuVersion(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/kubevirt.cmd.v1.Cmd/GetQemuVersion",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CmdServer).GetQemuVersion(ctx, req.(*EmptyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Cmd_SyncVirtualMachineCPUs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VMIRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CmdServer).SyncVirtualMachineCPUs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/kubevirt.cmd.v1.Cmd/SyncVirtualMachineCPUs",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CmdServer).SyncVirtualMachineCPUs(ctx, req.(*VMIRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var _Cmd_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "kubevirt.cmd.v1.Cmd",
 	HandlerType: (*CmdServer)(nil),
@@ -850,6 +1637,18 @@ var _Cmd_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UnpauseVirtualMachine",
 			Handler:    _Cmd_UnpauseVirtualMachine_Handler,
+		},
+		{
+			MethodName: "FreezeVirtualMachine",
+			Handler:    _Cmd_FreezeVirtualMachine_Handler,
+		},
+		{
+			MethodName: "UnfreezeVirtualMachine",
+			Handler:    _Cmd_UnfreezeVirtualMachine_Handler,
+		},
+		{
+			MethodName: "SoftRebootVirtualMachine",
+			Handler:    _Cmd_SoftRebootVirtualMachine_Handler,
 		},
 		{
 			MethodName: "ShutdownVirtualMachine",
@@ -876,8 +1675,16 @@ var _Cmd_serviceDesc = grpc.ServiceDesc{
 			Handler:    _Cmd_CancelVirtualMachineMigration_Handler,
 		},
 		{
-			MethodName: "SetVirtualMachineGuestTime",
-			Handler:    _Cmd_SetVirtualMachineGuestTime_Handler,
+			MethodName: "SignalTargetPodCleanup",
+			Handler:    _Cmd_SignalTargetPodCleanup_Handler,
+		},
+		{
+			MethodName: "FinalizeVirtualMachineMigration",
+			Handler:    _Cmd_FinalizeVirtualMachineMigration_Handler,
+		},
+		{
+			MethodName: "HotplugHostDevices",
+			Handler:    _Cmd_HotplugHostDevices_Handler,
 		},
 		{
 			MethodName: "GetDomain",
@@ -903,6 +1710,26 @@ var _Cmd_serviceDesc = grpc.ServiceDesc{
 			MethodName: "Ping",
 			Handler:    _Cmd_Ping_Handler,
 		},
+		{
+			MethodName: "Exec",
+			Handler:    _Cmd_Exec_Handler,
+		},
+		{
+			MethodName: "GuestPing",
+			Handler:    _Cmd_GuestPing_Handler,
+		},
+		{
+			MethodName: "VirtualMachineMemoryDump",
+			Handler:    _Cmd_VirtualMachineMemoryDump_Handler,
+		},
+		{
+			MethodName: "GetQemuVersion",
+			Handler:    _Cmd_GetQemuVersion_Handler,
+		},
+		{
+			MethodName: "SyncVirtualMachineCPUs",
+			Handler:    _Cmd_SyncVirtualMachineCPUs_Handler,
+		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "pkg/handler-launcher-com/cmd/v1/cmd.proto",
@@ -911,50 +1738,100 @@ var _Cmd_serviceDesc = grpc.ServiceDesc{
 func init() { proto.RegisterFile("pkg/handler-launcher-com/cmd/v1/cmd.proto", fileDescriptor0) }
 
 var fileDescriptor0 = []byte{
-	// 713 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xac, 0x96, 0xe1, 0x4f, 0xd3, 0x4e,
-	0x18, 0xc7, 0x37, 0xc6, 0x0f, 0xc6, 0xc3, 0xc2, 0x0f, 0x0e, 0x86, 0x15, 0x43, 0xc0, 0x8b, 0x21,
-	0x92, 0xc8, 0x08, 0xa8, 0x6f, 0x7c, 0x61, 0x0c, 0xa0, 0x0b, 0xe2, 0x00, 0x3b, 0x98, 0xd1, 0x98,
-	0x98, 0xa3, 0x3d, 0xba, 0x0b, 0xed, 0xb5, 0xf6, 0xae, 0xd5, 0xbd, 0xf7, 0x95, 0x89, 0xff, 0x93,
-	0x7f, 0x9a, 0xe9, 0xb5, 0x1b, 0x74, 0xed, 0x5c, 0x4c, 0xf7, 0x8a, 0x3e, 0xf7, 0x3c, 0xf7, 0x79,
-	0xbe, 0x7d, 0xae, 0xf7, 0x65, 0xb0, 0xed, 0xdd, 0x58, 0xbb, 0x5d, 0xc2, 0x4d, 0x9b, 0xfa, 0x3b,
-	0x36, 0x09, 0xb8, 0xd1, 0xa5, 0xfe, 0x8e, 0xe1, 0x3a, 0xbb, 0x86, 0x63, 0xee, 0x86, 0x7b, 0xd1,
-	0x9f, 0x86, 0xe7, 0xbb, 0xd2, 0x45, 0xff, 0xdf, 0x04, 0x57, 0x34, 0x64, 0xbe, 0x6c, 0x44, 0x6b,
-	0xe1, 0x1e, 0xde, 0x80, 0x4a, 0xa7, 0x75, 0x8c, 0x34, 0x98, 0x0d, 0x1d, 0xf6, 0x56, 0xb8, 0x5c,
-	0x2b, 0x6f, 0x96, 0x1f, 0xd7, 0xf4, 0x7e, 0x88, 0x7f, 0x96, 0x61, 0xa6, 0xdd, 0x3a, 0x60, 0xae,
-	0x40, 0x18, 0x6a, 0x0e, 0xe1, 0xc1, 0x35, 0x31, 0x64, 0xe0, 0x53, 0x5f, 0x55, 0xce, 0xe9, 0xa9,
-	0xb5, 0x08, 0xe4, 0xf9, 0xae, 0x19, 0x18, 0x52, 0x9b, 0x52, 0xe9, 0x7e, 0xa8, 0x5a, 0x50, 0x5f,
-	0x30, 0x97, 0x6b, 0x95, 0x38, 0x93, 0x84, 0x68, 0x11, 0x2a, 0xe2, 0x26, 0xd0, 0xa6, 0xd5, 0x6a,
-	0xf4, 0x88, 0x56, 0x61, 0xe6, 0x9a, 0x38, 0xcc, 0xee, 0x69, 0xff, 0xa9, 0xc5, 0x24, 0xc2, 0x26,
-	0xd4, 0x3b, 0xcc, 0x97, 0x01, 0xb1, 0x5b, 0xc4, 0xe8, 0x32, 0x4e, 0xcf, 0x3c, 0xc9, 0x5c, 0x2e,
-	0xd0, 0x09, 0xac, 0xa4, 0x13, 0xb1, 0x64, 0x25, 0x71, 0x7e, 0xff, 0x5e, 0x63, 0xe8, 0xb5, 0x1b,
-	0x71, 0x5a, 0xcf, 0xdd, 0x84, 0x43, 0x80, 0x4e, 0xeb, 0x58, 0xa7, 0x5f, 0x03, 0x2a, 0x24, 0xda,
-	0x82, 0x4a, 0xe8, 0xb0, 0x84, 0xb4, 0x92, 0x21, 0x45, 0x95, 0x51, 0x01, 0x7a, 0x05, 0xb3, 0x6e,
-	0xac, 0x46, 0xbd, 0xf9, 0xfc, 0xfe, 0x56, 0xb6, 0x36, 0x4f, 0xbb, 0xde, 0xdf, 0x86, 0x2f, 0x60,
-	0xb1, 0xc5, 0x2c, 0x9f, 0x44, 0xd1, 0xbf, 0x76, 0xd7, 0xd2, 0xdd, 0x6b, 0xb7, 0xd4, 0x05, 0xa8,
-	0xbd, 0x76, 0x3c, 0xd9, 0x4b, 0x88, 0xf8, 0x25, 0x54, 0x75, 0x2a, 0x3c, 0x97, 0x0b, 0x1a, 0xed,
-	0x12, 0x81, 0x61, 0x50, 0x11, 0x4f, 0xaa, 0xaa, 0xf7, 0xc3, 0x28, 0xe3, 0x50, 0x21, 0x88, 0x45,
-	0xfb, 0xe7, 0x98, 0x84, 0xf8, 0x0b, 0x2c, 0x1c, 0xb9, 0x0e, 0x61, 0x7c, 0x40, 0x79, 0x0e, 0x55,
-	0x3f, 0x79, 0x4e, 0x84, 0xde, 0xcf, 0x08, 0xed, 0x17, 0xeb, 0x83, 0xd2, 0xe8, 0x90, 0x4d, 0x05,
-	0x4a, 0x3a, 0x24, 0x11, 0xe6, 0xb0, 0x1c, 0x37, 0x68, 0x4b, 0x22, 0x45, 0xd1, 0x2e, 0x9b, 0x30,
-	0x6f, 0xde, 0xd2, 0x92, 0x56, 0x77, 0x97, 0xf0, 0x77, 0x58, 0x6a, 0x46, 0x93, 0x39, 0xe6, 0xd7,
-	0x6e, 0xd1, 0x6e, 0x4f, 0x60, 0xc9, 0x1a, 0x66, 0x25, 0x3d, 0xb3, 0x09, 0xfc, 0xa3, 0x0c, 0x75,
-	0xd5, 0xfa, 0x52, 0x50, 0xff, 0x1d, 0x13, 0xb2, 0x68, 0xfb, 0x67, 0x50, 0xb7, 0xf2, 0x78, 0x89,
-	0x84, 0xfc, 0x24, 0xfe, 0x55, 0x06, 0x4d, 0xc9, 0x78, 0xc3, 0x6c, 0x2a, 0x7a, 0x42, 0x52, 0xa7,
-	0xf0, 0xd8, 0x5f, 0x80, 0x66, 0x8d, 0x40, 0x26, 0x62, 0x46, 0xe6, 0xf7, 0x7f, 0x03, 0x54, 0x0e,
-	0x1d, 0x13, 0x9d, 0x02, 0x6a, 0xf7, 0xb8, 0x91, 0xbe, 0x35, 0xe8, 0x41, 0xee, 0x25, 0x88, 0x3f,
-	0xee, 0xb5, 0xd1, 0xda, 0x70, 0x09, 0x9d, 0xc1, 0xf2, 0x39, 0x09, 0x04, 0x9d, 0x18, 0xf0, 0x3d,
-	0xd4, 0x2f, 0xb9, 0x37, 0x51, 0xa4, 0x0e, 0xab, 0xed, 0x6e, 0x20, 0x4d, 0xf7, 0x1b, 0x9f, 0x18,
-	0xf3, 0x14, 0xd0, 0x09, 0xb3, 0xed, 0x89, 0xf1, 0xce, 0x61, 0xe5, 0x88, 0xda, 0x54, 0x4e, 0xee,
-	0xad, 0x3f, 0x40, 0x3d, 0x76, 0xbe, 0x61, 0xe4, 0xc3, 0xcc, 0xae, 0x61, 0x87, 0x1c, 0x7b, 0xe4,
-	0xd1, 0x27, 0x34, 0xd8, 0x74, 0x41, 0x7c, 0x8b, 0xca, 0x02, 0x4a, 0x3f, 0xc2, 0xfa, 0x21, 0xe1,
-	0x06, 0x1d, 0x9a, 0xe6, 0xa0, 0x41, 0x01, 0x74, 0x07, 0xd6, 0xda, 0x54, 0xa6, 0xb9, 0xea, 0x5a,
-	0x5e, 0x30, 0xa7, 0xc8, 0x70, 0x5b, 0x30, 0xd7, 0xa4, 0x32, 0xb6, 0x54, 0xb4, 0x9e, 0xa9, 0xbc,
-	0xfb, 0xcf, 0x61, 0x6d, 0x23, 0x93, 0x4e, 0x7b, 0xbd, 0x3a, 0xab, 0x85, 0x01, 0x4e, 0x19, 0xe8,
-	0x38, 0xe6, 0xa3, 0x11, 0xcc, 0x94, 0xbd, 0xe3, 0x12, 0x6a, 0x43, 0xad, 0x49, 0xe5, 0xc0, 0x8a,
-	0xc7, 0x61, 0x71, 0x26, 0x9d, 0x71, 0x71, 0x05, 0xad, 0x36, 0xa9, 0xb2, 0xbc, 0xb1, 0x3a, 0xb7,
-	0xf2, 0x81, 0x19, 0xbb, 0x2c, 0xa1, 0xcf, 0x6a, 0x04, 0x77, 0xac, 0x6b, 0x1c, 0x7a, 0x3b, 0x1f,
-	0x9d, 0x63, 0x7e, 0xb8, 0x84, 0x0e, 0x60, 0xfa, 0x9c, 0x71, 0x6b, 0x1c, 0xf3, 0x6f, 0x67, 0x7e,
-	0x30, 0xfd, 0x69, 0x2a, 0xdc, 0xbb, 0x9a, 0x51, 0x3f, 0xfa, 0x9e, 0xfe, 0x09, 0x00, 0x00, 0xff,
-	0xff, 0x67, 0xbf, 0xe6, 0x8c, 0x21, 0x0a, 0x00, 0x00,
+	// 1519 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xac, 0x58, 0x7b, 0x6f, 0xdb, 0x46,
+	0x12, 0x8f, 0x1e, 0xb6, 0xa5, 0xf1, 0xe3, 0xe2, 0xf5, 0xe3, 0x18, 0xdf, 0x25, 0xf1, 0x11, 0x07,
+	0xc3, 0x01, 0x12, 0xfb, 0xec, 0x73, 0x82, 0x43, 0x70, 0x28, 0x52, 0xcb, 0x8e, 0xf3, 0xa8, 0x1c,
+	0x85, 0xb2, 0x1d, 0x34, 0x2d, 0x10, 0xd0, 0xe4, 0x9a, 0x5e, 0x98, 0xdc, 0x65, 0xb9, 0x4b, 0xd5,
+	0x0a, 0xd0, 0xbf, 0x5a, 0xf4, 0x8f, 0x02, 0x45, 0x3f, 0x46, 0x3f, 0x52, 0xbf, 0x4e, 0xb1, 0xcb,
+	0xa5, 0x4c, 0x89, 0x54, 0x1c, 0x57, 0xfa, 0x4b, 0x3b, 0x3b, 0x33, 0xbf, 0x99, 0x9d, 0x9d, 0x99,
+	0x1d, 0x11, 0x1e, 0x84, 0x17, 0xde, 0xe6, 0xb9, 0x4d, 0x5d, 0x1f, 0x47, 0x8f, 0x7c, 0x3b, 0xa6,
+	0xce, 0x39, 0x8e, 0x1e, 0x39, 0x2c, 0xd8, 0x74, 0x02, 0x77, 0xb3, 0xb3, 0x25, 0x7f, 0x36, 0xc2,
+	0x88, 0x09, 0x86, 0xfe, 0x76, 0x11, 0x9f, 0xe2, 0x0e, 0x89, 0xc4, 0x86, 0xdc, 0xeb, 0x6c, 0x99,
+	0x67, 0xb0, 0xf0, 0x16, 0x07, 0xf1, 0x09, 0x8e, 0x38, 0x61, 0xd4, 0xc2, 0x3c, 0x64, 0x94, 0x63,
+	0xf4, 0x18, 0x6a, 0x91, 0x5e, 0x1b, 0xa5, 0xd5, 0xd2, 0xfa, 0xf4, 0xf6, 0x9d, 0x8d, 0x01, 0xd5,
+	0x8d, 0x54, 0xd8, 0xea, 0x89, 0x22, 0x03, 0xa6, 0x3a, 0x09, 0x92, 0x51, 0x5e, 0x2d, 0xad, 0xd7,
+	0xad, 0x94, 0x34, 0xef, 0x43, 0xe5, 0xa4, 0xf9, 0x52, 0x09, 0x04, 0xe4, 0x15, 0x67, 0x54, 0xc1,
+	0xce, 0x58, 0x29, 0x69, 0x6e, 0x41, 0xa5, 0xd1, 0x3a, 0x46, 0x73, 0x50, 0x26, 0xae, 0xe2, 0xcd,
+	0x5a, 0x65, 0xe2, 0xa2, 0x15, 0xa8, 0x71, 0x72, 0xea, 0x13, 0xea, 0x71, 0xa3, 0xbc, 0x5a, 0x59,
+	0x9f, 0xb5, 0x7a, 0xb4, 0xb9, 0x09, 0x53, 0xed, 0x64, 0x9d, 0x53, 0x5b, 0x84, 0x89, 0x8e, 0xed,
+	0xc7, 0x58, 0xb9, 0x51, 0xb5, 0x12, 0xc2, 0xdc, 0x87, 0x89, 0x96, 0xed, 0x61, 0x2e, 0xd9, 0x0e,
+	0x8b, 0xa9, 0x50, 0x1a, 0x55, 0x2b, 0x21, 0x10, 0x82, 0x6a, 0x4c, 0x89, 0xd0, 0xae, 0xab, 0xb5,
+	0xdc, 0xe3, 0xe4, 0x23, 0x36, 0x2a, 0x0a, 0x5a, 0xad, 0xcd, 0x1d, 0x98, 0x6c, 0xe2, 0x80, 0x45,
+	0x5d, 0xb4, 0x0c, 0x93, 0x76, 0x90, 0x01, 0xd2, 0x54, 0x11, 0x92, 0xf9, 0x47, 0x09, 0xaa, 0x0d,
+	0xec, 0xfb, 0x39, 0x5f, 0x37, 0x61, 0x32, 0x50, 0x70, 0x4a, 0x7c, 0x7a, 0xfb, 0xef, 0xb9, 0x48,
+	0x27, 0xd6, 0x2c, 0x2d, 0x86, 0x1e, 0xc2, 0x44, 0x28, 0x8f, 0x61, 0x54, 0x56, 0x2b, 0xeb, 0xd3,
+	0xdb, 0xcb, 0x39, 0x79, 0x75, 0x48, 0x2b, 0x11, 0x42, 0x4f, 0xa0, 0xee, 0x12, 0x2e, 0x6c, 0xea,
+	0x60, 0x6e, 0x54, 0x95, 0x86, 0x91, 0xd3, 0xd0, 0x71, 0xb4, 0xae, 0x44, 0xd1, 0x3a, 0x54, 0x9d,
+	0x30, 0xe6, 0xc6, 0x84, 0x52, 0x59, 0xcc, 0xa9, 0x34, 0x5a, 0xc7, 0x96, 0x92, 0x30, 0x9f, 0x41,
+	0xed, 0x88, 0x85, 0xcc, 0x67, 0x5e, 0x17, 0xed, 0x00, 0xd0, 0x38, 0xb0, 0x3f, 0x38, 0xd8, 0xf7,
+	0xb9, 0x51, 0x52, 0xba, 0x4b, 0x79, 0x5d, 0xec, 0xfb, 0x56, 0x5d, 0x0a, 0xca, 0x15, 0x37, 0x7f,
+	0x29, 0xc1, 0x64, 0xbb, 0xb9, 0x4b, 0x18, 0x47, 0x26, 0xcc, 0x04, 0x36, 0x8d, 0xcf, 0x6c, 0x47,
+	0xc4, 0x11, 0x8e, 0x54, 0x9c, 0xea, 0x56, 0xdf, 0x9e, 0xcc, 0xa2, 0x30, 0x62, 0x6e, 0xec, 0xa4,
+	0x11, 0x4e, 0xc9, 0x6c, 0x02, 0x56, 0xfa, 0x12, 0x10, 0xdd, 0x86, 0x0a, 0xbf, 0x88, 0x8d, 0xaa,
+	0xda, 0x95, 0x4b, 0x79, 0x79, 0x67, 0x76, 0x40, 0xfc, 0xae, 0x31, 0xa1, 0x36, 0x35, 0x65, 0xfe,
+	0x5c, 0x82, 0xda, 0x1e, 0xe1, 0x17, 0x2f, 0xe9, 0x19, 0x53, 0x42, 0x2c, 0x0a, 0x6c, 0xa1, 0x1d,
+	0xd1, 0x14, 0x5a, 0x85, 0xe9, 0x53, 0xdb, 0xb9, 0x20, 0xd4, 0x7b, 0x4e, 0x7c, 0xac, 0xdd, 0xc8,
+	0x6e, 0xa1, 0x7b, 0x00, 0xd2, 0x5f, 0xdb, 0x6f, 0xa7, 0xf9, 0x53, 0xb5, 0x32, 0x3b, 0x12, 0x41,
+	0x86, 0x24, 0x15, 0xa8, 0x2a, 0x81, 0xec, 0x96, 0xf9, 0x03, 0xcc, 0x36, 0xfc, 0x98, 0x0b, 0x1c,
+	0x35, 0x18, 0x3d, 0x23, 0x1e, 0xda, 0x00, 0xb4, 0x7f, 0x19, 0xda, 0xd4, 0x95, 0xee, 0xf1, 0x7d,
+	0x6a, 0x9f, 0xfa, 0x38, 0xc9, 0xa4, 0x9a, 0x55, 0xc0, 0x41, 0xff, 0x87, 0x3b, 0xcf, 0x23, 0x8c,
+	0x65, 0x3a, 0x58, 0x38, 0x64, 0x91, 0x20, 0xd4, 0xdb, 0x23, 0x3c, 0x51, 0x2b, 0x2b, 0xb5, 0xe1,
+	0x02, 0xe6, 0xef, 0x55, 0x58, 0x3a, 0x49, 0xdc, 0x69, 0xda, 0xce, 0x39, 0xa1, 0xf8, 0x4d, 0x28,
+	0x08, 0xa3, 0x1c, 0xbd, 0x86, 0xc5, 0x7e, 0x46, 0x72, 0x77, 0xba, 0x53, 0xe4, 0xf3, 0x37, 0x61,
+	0x5b, 0x85, 0x4a, 0x68, 0x07, 0x96, 0x9a, 0x38, 0xd8, 0xb5, 0x7d, 0x9f, 0x31, 0xda, 0x16, 0xb6,
+	0xe0, 0x2d, 0x1c, 0x11, 0x96, 0x38, 0x38, 0x6b, 0x15, 0x33, 0xd1, 0x7f, 0x60, 0xa1, 0x15, 0x61,
+	0xb9, 0xef, 0xd8, 0x02, 0xbb, 0x27, 0xcc, 0x8f, 0x03, 0x5d, 0x11, 0x75, 0xab, 0x88, 0x25, 0x5b,
+	0x9a, 0xd0, 0x59, 0xaa, 0x82, 0x5d, 0xd4, 0xd2, 0xd2, 0x34, 0xb6, 0x7a, 0xa2, 0xa8, 0x0d, 0x75,
+	0x15, 0x53, 0x99, 0x0d, 0xba, 0x16, 0x1e, 0xe7, 0xf4, 0x0a, 0xc3, 0xb4, 0xd1, 0xd3, 0xdb, 0xa7,
+	0x22, 0xea, 0x5a, 0x57, 0x38, 0x43, 0x2e, 0x72, 0x72, 0xe8, 0x45, 0xee, 0xc1, 0xac, 0x93, 0xcd,
+	0x04, 0x63, 0x4a, 0x1d, 0xe0, 0x5e, 0xbe, 0xb0, 0xb2, 0x52, 0x56, 0xbf, 0xd2, 0xca, 0x3b, 0x98,
+	0xeb, 0x77, 0x49, 0x16, 0xc5, 0x05, 0xee, 0xea, 0xd4, 0x96, 0x4b, 0xb4, 0x99, 0x6d, 0x9c, 0x45,
+	0x21, 0x4a, 0x2b, 0x43, 0xf7, 0xd4, 0xa7, 0xe5, 0xff, 0x95, 0xcc, 0x0e, 0xc0, 0x49, 0xf3, 0xa5,
+	0x85, 0xbf, 0x8b, 0x31, 0x17, 0x68, 0x0d, 0x2a, 0x9d, 0x80, 0xe8, 0x64, 0xc8, 0xf7, 0x0d, 0x29,
+	0x29, 0x05, 0xd0, 0x33, 0x98, 0x62, 0x49, 0xa4, 0xb4, 0xb1, 0xb5, 0xcf, 0x8b, 0xab, 0x95, 0xaa,
+	0x99, 0x47, 0x70, 0xbb, 0x49, 0xbc, 0xc8, 0x16, 0xea, 0xe9, 0xba, 0x99, 0x75, 0xa3, 0xdf, 0xfa,
+	0xcc, 0x15, 0xea, 0x8f, 0x25, 0x98, 0xde, 0xbf, 0xc4, 0x4e, 0x8a, 0x78, 0x0f, 0xc0, 0x65, 0x81,
+	0x4d, 0xe8, 0xa1, 0x1d, 0x60, 0x1d, 0xab, 0xcc, 0x8e, 0x44, 0x6a, 0xb0, 0x20, 0xb0, 0xa9, 0x9b,
+	0x76, 0x23, 0x4d, 0xca, 0x67, 0xe0, 0xcb, 0xc8, 0x4b, 0xb3, 0x52, 0xad, 0xd1, 0x1a, 0xcc, 0x09,
+	0x12, 0x60, 0x16, 0x8b, 0x36, 0x76, 0x18, 0x75, 0xb9, 0x4a, 0xc6, 0x09, 0x6b, 0x60, 0xd7, 0x9c,
+	0x83, 0x99, 0xfd, 0x20, 0x14, 0x5d, 0xed, 0x85, 0xf9, 0x05, 0xd4, 0xac, 0xcc, 0x33, 0xcb, 0x63,
+	0xc7, 0xc1, 0x9c, 0xeb, 0xe2, 0x4f, 0x49, 0xc9, 0x09, 0x30, 0xe7, 0xb6, 0x97, 0xb6, 0xa4, 0x94,
+	0x34, 0x3f, 0xc0, 0xdc, 0x9e, 0xf2, 0x79, 0xd4, 0x37, 0x7e, 0x19, 0x26, 0x93, 0xc3, 0x6b, 0x0b,
+	0x9a, 0x32, 0x29, 0x2c, 0x24, 0x06, 0x54, 0x99, 0x8e, 0x6a, 0x65, 0x15, 0xa6, 0xdd, 0x2b, 0xb4,
+	0xb4, 0xbf, 0x66, 0xb6, 0xcc, 0x4b, 0x98, 0x3f, 0x90, 0x91, 0x51, 0xc9, 0x38, 0xa2, 0xb5, 0x87,
+	0x30, 0xef, 0x0d, 0x62, 0x69, 0x9b, 0x79, 0x86, 0xf9, 0x53, 0x09, 0x96, 0x94, 0xe9, 0x63, 0x8e,
+	0xa3, 0xaf, 0x08, 0x17, 0xa3, 0x9a, 0xdf, 0x81, 0x25, 0xaf, 0x08, 0x4f, 0xbb, 0x50, 0xcc, 0x34,
+	0x7f, 0x2d, 0x81, 0xa1, 0xdc, 0x90, 0xcf, 0x0d, 0xef, 0x72, 0x81, 0x83, 0x91, 0xc3, 0xfe, 0x14,
+	0x0c, 0x6f, 0x08, 0xa4, 0x76, 0x66, 0x28, 0xdf, 0xec, 0xc2, 0x4c, 0x52, 0x36, 0xa3, 0xb9, 0xb0,
+	0x02, 0x35, 0x7c, 0x49, 0x44, 0x83, 0xb9, 0x89, 0xc9, 0x09, 0xab, 0x47, 0xcb, 0xdc, 0xe3, 0xc2,
+	0x7d, 0x13, 0x0b, 0xfd, 0xba, 0x6b, 0xca, 0x7c, 0x0f, 0xb7, 0x55, 0x24, 0x5a, 0x72, 0x86, 0xf9,
+	0xcc, 0xb2, 0xcd, 0x17, 0x62, 0xb9, 0xb0, 0x10, 0x5f, 0xe9, 0x3c, 0x4b, 0xb0, 0x47, 0x3a, 0x9b,
+	0xc9, 0x60, 0x56, 0xbe, 0xb7, 0x1f, 0xf1, 0x4d, 0xbb, 0xd5, 0x13, 0x58, 0x8e, 0xe9, 0x99, 0x52,
+	0x3d, 0x2a, 0x72, 0x7a, 0x08, 0xd7, 0x7c, 0x07, 0xf3, 0xc9, 0xf0, 0xb8, 0x17, 0x07, 0xe1, 0x4d,
+	0x8d, 0xae, 0x40, 0xcd, 0x8d, 0x83, 0xb0, 0x65, 0x8b, 0x73, 0x7d, 0xf9, 0x3d, 0x7a, 0xfb, 0xb7,
+	0x79, 0xa8, 0x34, 0x02, 0x17, 0x1d, 0x02, 0x6a, 0x77, 0xa9, 0xd3, 0xdf, 0xa8, 0xd1, 0x3f, 0x0a,
+	0x41, 0x13, 0xf3, 0x2b, 0xc3, 0x23, 0x65, 0xde, 0x42, 0x6f, 0x60, 0xa1, 0x65, 0xc7, 0x1c, 0x8f,
+	0x0d, 0xf0, 0x2d, 0x2c, 0x1d, 0xd3, 0x70, 0xac, 0x90, 0x6d, 0x58, 0x4c, 0x6e, 0x71, 0x00, 0x31,
+	0xff, 0x1c, 0xf7, 0x5d, 0xf6, 0xa7, 0x41, 0x2d, 0x58, 0x3e, 0xd6, 0x77, 0x38, 0x36, 0x47, 0x8f,
+	0xc0, 0x68, 0xb3, 0x33, 0x61, 0xe1, 0x53, 0xc6, 0xc4, 0xd8, 0x50, 0x2d, 0x58, 0x6e, 0x9f, 0xc7,
+	0xc2, 0x65, 0xdf, 0xd3, 0xb1, 0x61, 0x1e, 0x02, 0x7a, 0x4d, 0x7c, 0x7f, 0x6c, 0x78, 0x2d, 0x58,
+	0xdc, 0xc3, 0x3e, 0x16, 0xe3, 0x8b, 0xe5, 0x3b, 0x58, 0x4a, 0x66, 0x8d, 0x41, 0xc8, 0x7f, 0xe5,
+	0xff, 0xae, 0x0d, 0xcc, 0x24, 0xd7, 0x66, 0xbc, 0xac, 0xa0, 0x9e, 0xd2, 0x91, 0x1d, 0x79, 0x58,
+	0x8c, 0xe0, 0xe9, 0xd7, 0x70, 0xb7, 0x21, 0xff, 0xc2, 0x0d, 0x44, 0xb3, 0x67, 0x60, 0xc4, 0xab,
+	0x27, 0x1e, 0xb5, 0xfd, 0xc4, 0xc9, 0x16, 0x73, 0x1b, 0x3e, 0xb6, 0x69, 0x1c, 0x8e, 0x80, 0xf9,
+	0x0d, 0xdc, 0x7f, 0x4e, 0xa8, 0xed, 0x93, 0xc1, 0xc4, 0x1f, 0x87, 0xc3, 0x87, 0x80, 0x5e, 0x30,
+	0x11, 0xfa, 0xb1, 0xf7, 0x82, 0x71, 0xb1, 0x87, 0x3b, 0x44, 0xfe, 0xb5, 0xfd, 0xeb, 0x78, 0x4d,
+	0xa8, 0x1f, 0x60, 0x91, 0xcc, 0x39, 0xe8, 0x6e, 0x4e, 0x32, 0x3b, 0xb1, 0xad, 0xdc, 0xcf, 0xcf,
+	0xce, 0x7d, 0x03, 0x98, 0x4a, 0xaa, 0xb9, 0x1e, 0x9c, 0x9a, 0x6a, 0xae, 0xc3, 0xfc, 0xf7, 0x10,
+	0xcc, 0xbe, 0x99, 0x4b, 0xb5, 0xa8, 0x99, 0x03, 0x2c, 0x7a, 0xf3, 0xd1, 0x75, 0xb0, 0x66, 0x8e,
+	0x9d, 0x1b, 0xad, 0x14, 0x68, 0xed, 0x00, 0xab, 0x39, 0xe4, 0x5a, 0x3f, 0xd7, 0x8a, 0x01, 0x73,
+	0x33, 0xcc, 0x2d, 0xf4, 0xad, 0x0a, 0x41, 0x66, 0x9e, 0xb8, 0x0e, 0xfa, 0x41, 0x31, 0x74, 0xd1,
+	0x44, 0x72, 0x0b, 0xed, 0x42, 0x55, 0xbe, 0xdb, 0xd7, 0x61, 0x7e, 0xf2, 0xce, 0xf7, 0xa1, 0x2a,
+	0xe7, 0x1a, 0xf4, 0xcf, 0x3c, 0xc6, 0xd5, 0xbf, 0x84, 0x95, 0xbb, 0x43, 0xb8, 0x99, 0x66, 0x5c,
+	0xef, 0xcd, 0x11, 0x05, 0x4d, 0x63, 0x70, 0x7e, 0x19, 0x76, 0x27, 0xd9, 0x31, 0x44, 0x55, 0x8f,
+	0x31, 0x50, 0x35, 0xbd, 0xe7, 0x1e, 0x99, 0x43, 0x3e, 0x24, 0x65, 0x66, 0x81, 0xeb, 0x7a, 0x9e,
+	0xbc, 0x9b, 0xcc, 0xf7, 0xc1, 0x9b, 0xa7, 0x67, 0xc1, 0xc7, 0x45, 0xdd, 0x47, 0x72, 0x53, 0x43,
+	0xa3, 0x75, 0x3c, 0x42, 0x69, 0xee, 0x56, 0xdf, 0x97, 0x3b, 0x5b, 0xa7, 0x93, 0xea, 0x3b, 0xe7,
+	0x7f, 0xff, 0x0c, 0x00, 0x00, 0xff, 0xff, 0x3a, 0x67, 0xd8, 0x26, 0x14, 0x15, 0x00, 0x00,
 }

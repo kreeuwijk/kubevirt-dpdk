@@ -23,9 +23,12 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"k8s.io/api/admission/v1beta1"
+	"kubevirt.io/kubevirt/pkg/apimachinery/patch"
 
-	v1 "kubevirt.io/client-go/api/v1"
+	admissionv1 "k8s.io/api/admission/v1"
+
+	v1 "kubevirt.io/api/core/v1"
+
 	webhookutils "kubevirt.io/kubevirt/pkg/util/webhooks"
 	"kubevirt.io/kubevirt/pkg/virt-api/webhooks"
 )
@@ -33,7 +36,7 @@ import (
 type MigrationCreateMutator struct {
 }
 
-func (mutator *MigrationCreateMutator) Mutate(ar *v1beta1.AdmissionReview) *v1beta1.AdmissionResponse {
+func (mutator *MigrationCreateMutator) Mutate(ar *admissionv1.AdmissionReview) *admissionv1.AdmissionResponse {
 	if !webhookutils.ValidateRequestResource(ar.Request.Resource, webhooks.MigrationGroupVersionResource.Group, webhooks.MigrationGroupVersionResource.Resource) {
 		err := fmt.Errorf("expect resource to be '%s'", webhooks.MigrationGroupVersionResource.Resource)
 		return webhookutils.ToAdmissionResponseError(err)
@@ -51,32 +54,35 @@ func (mutator *MigrationCreateMutator) Mutate(ar *v1beta1.AdmissionReview) *v1be
 		return webhookutils.ToAdmissionResponseError(err)
 	}
 
+	// Add our selector label
+	if migration.Labels == nil {
+		migration.Labels = map[string]string{v1.MigrationSelectorLabel: migration.Spec.VMIName}
+	} else {
+		migration.Labels[v1.MigrationSelectorLabel] = migration.Spec.VMIName
+	}
+
 	// Add a finalizer
 	migration.Finalizers = append(migration.Finalizers, v1.VirtualMachineInstanceMigrationFinalizer)
-	var patch []patchOperation
-	var value interface{}
 
-	value = migration.Spec
-	patch = append(patch, patchOperation{
-		Op:    "replace",
-		Path:  "/spec",
-		Value: value,
-	})
+	patchBytes, err := patch.GeneratePatchPayload(
+		patch.PatchOperation{
+			Op:    patch.PatchReplaceOp,
+			Path:  "/spec",
+			Value: migration.Spec,
+		},
+		patch.PatchOperation{
+			Op:    patch.PatchReplaceOp,
+			Path:  "/metadata",
+			Value: migration.ObjectMeta,
+		},
+	)
 
-	value = migration.ObjectMeta
-	patch = append(patch, patchOperation{
-		Op:    "replace",
-		Path:  "/metadata",
-		Value: value,
-	})
-
-	patchBytes, err := json.Marshal(patch)
 	if err != nil {
 		return webhookutils.ToAdmissionResponseError(err)
 	}
 
-	jsonPatchType := v1beta1.PatchTypeJSONPatch
-	return &v1beta1.AdmissionResponse{
+	jsonPatchType := admissionv1.PatchTypeJSONPatch
+	return &admissionv1.AdmissionResponse{
 		Allowed:   true,
 		Patch:     patchBytes,
 		PatchType: &jsonPatchType,

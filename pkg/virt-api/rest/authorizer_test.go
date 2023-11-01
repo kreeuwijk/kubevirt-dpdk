@@ -25,15 +25,12 @@ import (
 	"net/http"
 	"net/url"
 
-	restful "github.com/emicklei/go-restful"
-	. "github.com/onsi/ginkgo"
-	"github.com/onsi/ginkgo/extensions/table"
+	restful "github.com/emicklei/go-restful/v3"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/ghttp"
-	authorizationclient "k8s.io/client-go/kubernetes/typed/authorization/v1beta1"
+	authorizationclient "k8s.io/client-go/kubernetes/typed/authorization/v1"
 	"k8s.io/client-go/tools/clientcmd"
-
-	"kubevirt.io/client-go/log"
 )
 
 var _ = Describe("Authorizer", func() {
@@ -42,7 +39,6 @@ var _ = Describe("Authorizer", func() {
 		var server *ghttp.Server
 		var req *restful.Request
 
-		log.Log.SetIOWriter(GinkgoWriter)
 		fakecert := &x509.Certificate{}
 
 		app := authorizor{}
@@ -54,8 +50,6 @@ var _ = Describe("Authorizer", func() {
 			req.Request.Header[userHeader] = []string{"user"}
 			req.Request.Header[groupHeader] = []string{"userGroup"}
 			req.Request.Header[userExtraHeaderPrefix+"test"] = []string{"userExtraValue"}
-			req.Request.Method = http.MethodGet
-			req.Request.URL.Path = "/apis/subresources.kubevirt.io/v1alpha3/namespaces/default/virtualmachineinstances/testvmi/console"
 
 			server = ghttp.NewServer()
 			config, err := clientcmd.BuildConfigFromFlags(server.URL(), "")
@@ -70,97 +64,190 @@ var _ = Describe("Authorizer", func() {
 			app.userExtraHeaderPrefixes = append(app.userExtraHeaderPrefixes, userExtraHeaderPrefix)
 		})
 
-		Context("Subresource api", func() {
-			It("should reject unauthenticated user", func(done Done) {
-				allowed, reason, err := app.Authorize(req)
-				Expect(err).ToNot(HaveOccurred())
-				Expect(allowed).To(BeFalse())
-				Expect(reason).To(Equal("request is not authenticated"))
+		Context("Subresource api with namespaced resource", func() {
+			Context("with namespaced resource", func() {
+				BeforeEach(func() {
+					req.Request.Method = http.MethodGet
+					req.Request.URL.Path = "/apis/subresources.kubevirt.io/v1alpha3/namespaces/default/virtualmachineinstances/testvmi/console"
+				})
 
-				close(done)
-			}, 5)
+				It("should reject unauthenticated user", func() {
+					allowed, reason, err := app.Authorize(req)
+					Expect(err).ToNot(HaveOccurred())
+					Expect(allowed).To(BeFalse())
+					Expect(reason).To(Equal("request is not authenticated"))
+				})
 
-			It("should reject unauthorized user", func(done Done) {
+				It("should reject unauthorized user", func() {
 
-				req.Request.TLS = &tls.ConnectionState{}
-				req.Request.TLS.PeerCertificates = append(req.Request.TLS.PeerCertificates, fakecert)
+					req.Request.TLS = &tls.ConnectionState{}
+					req.Request.TLS.PeerCertificates = append(req.Request.TLS.PeerCertificates, fakecert)
 
-				result, err := app.generateAccessReview(req)
-				Expect(err).ToNot(HaveOccurred())
-				result.Status.Allowed = false
-				result.Status.Reason = "just because"
+					result, err := app.generateAccessReview(req)
+					Expect(err).ToNot(HaveOccurred())
+					result.Status.Allowed = false
+					result.Status.Reason = "just because"
 
-				server.AppendHandlers(
-					ghttp.CombineHandlers(
-						ghttp.VerifyRequest("POST", "/apis/authorization.k8s.io/v1beta1/subjectaccessreviews"),
-						ghttp.RespondWithJSONEncoded(http.StatusOK, result),
-					),
-				)
+					server.AppendHandlers(
+						ghttp.CombineHandlers(
+							ghttp.VerifyRequest("POST", "/apis/authorization.k8s.io/v1/subjectaccessreviews"),
+							ghttp.RespondWithJSONEncoded(http.StatusOK, result),
+						),
+					)
 
-				allowed, reason, err := app.Authorize(req)
-				Expect(err).ToNot(HaveOccurred())
-				Expect(allowed).To(BeFalse())
-				Expect(reason).To(Equal("just because"))
+					allowed, reason, err := app.Authorize(req)
+					Expect(err).ToNot(HaveOccurred())
+					Expect(allowed).To(BeFalse())
+					Expect(reason).To(Equal("just because"))
+				})
 
-				close(done)
-			}, 5)
+				It("should allow authorized user", func() {
 
-			It("should allow authorized user", func(done Done) {
+					req.Request.TLS = &tls.ConnectionState{}
+					req.Request.TLS.PeerCertificates = append(req.Request.TLS.PeerCertificates, fakecert)
 
-				req.Request.TLS = &tls.ConnectionState{}
-				req.Request.TLS.PeerCertificates = append(req.Request.TLS.PeerCertificates, fakecert)
+					result, err := app.generateAccessReview(req)
+					Expect(err).ToNot(HaveOccurred())
+					result.Status.Allowed = true
 
-				result, err := app.generateAccessReview(req)
-				Expect(err).ToNot(HaveOccurred())
-				result.Status.Allowed = true
+					server.AppendHandlers(
+						ghttp.CombineHandlers(
+							ghttp.VerifyRequest("POST", "/apis/authorization.k8s.io/v1/subjectaccessreviews"),
+							ghttp.RespondWithJSONEncoded(http.StatusOK, result),
+						),
+					)
 
-				server.AppendHandlers(
-					ghttp.CombineHandlers(
-						ghttp.VerifyRequest("POST", "/apis/authorization.k8s.io/v1beta1/subjectaccessreviews"),
-						ghttp.RespondWithJSONEncoded(http.StatusOK, result),
-					),
-				)
+					allowed, _, err := app.Authorize(req)
+					Expect(err).ToNot(HaveOccurred())
+					Expect(allowed).To(BeTrue())
+				})
 
-				allowed, _, err := app.Authorize(req)
-				Expect(err).ToNot(HaveOccurred())
-				Expect(allowed).To(BeTrue())
+				It("should not allow user if auth check fails", func() {
 
-				close(done)
-			}, 5)
+					req.Request.TLS = &tls.ConnectionState{}
+					req.Request.TLS.PeerCertificates = append(req.Request.TLS.PeerCertificates, fakecert)
 
-			It("should not allow user if auth check fails", func(done Done) {
+					server.AppendHandlers(
+						ghttp.CombineHandlers(
+							ghttp.VerifyRequest("POST", "/apis/authorization.k8s.io/v1/subjectaccessreviews"),
+							ghttp.RespondWithJSONEncoded(http.StatusInternalServerError, nil),
+						),
+					)
 
-				req.Request.TLS = &tls.ConnectionState{}
-				req.Request.TLS.PeerCertificates = append(req.Request.TLS.PeerCertificates, fakecert)
+					allowed, _, err := app.Authorize(req)
+					Expect(err).To(HaveOccurred())
+					Expect(allowed).To(BeFalse())
+				})
+			})
 
-				server.AppendHandlers(
-					ghttp.CombineHandlers(
-						ghttp.VerifyRequest("POST", "/apis/authorization.k8s.io/v1beta1/subjectaccessreviews"),
-						ghttp.RespondWithJSONEncoded(http.StatusInternalServerError, nil),
-					),
-				)
+			Context("with namespaced base resource", func() {
+				BeforeEach(func() {
+					req.Request.Method = http.MethodPut
+					req.Request.URL.Path = "/apis/subresources.kubevirt.io/v1alpha3/namespaces/default/expand-vm-spec"
+				})
 
-				allowed, _, err := app.Authorize(req)
-				Expect(err).To(HaveOccurred())
-				Expect(allowed).To(BeFalse())
+				It("should reject unauthenticated user", func() {
+					allowed, reason, err := app.Authorize(req)
+					Expect(err).ToNot(HaveOccurred())
+					Expect(allowed).To(BeFalse())
+					Expect(reason).To(Equal("request is not authenticated"))
+				})
 
-				close(done)
-			}, 5)
+				It("should reject unauthorized user", func() {
 
-			table.DescribeTable("should allow all users for info endpoints", func(path string) {
+					req.Request.TLS = &tls.ConnectionState{}
+					req.Request.TLS.PeerCertificates = append(req.Request.TLS.PeerCertificates, fakecert)
+
+					result, err := app.generateAccessReview(req)
+					Expect(err).ToNot(HaveOccurred())
+					result.Status.Allowed = false
+					result.Status.Reason = "just because"
+
+					server.AppendHandlers(
+						ghttp.CombineHandlers(
+							ghttp.VerifyRequest("POST", "/apis/authorization.k8s.io/v1/subjectaccessreviews"),
+							ghttp.RespondWithJSONEncoded(http.StatusOK, result),
+						),
+					)
+
+					allowed, reason, err := app.Authorize(req)
+					Expect(err).ToNot(HaveOccurred())
+					Expect(allowed).To(BeFalse())
+					Expect(reason).To(Equal("just because"))
+				})
+
+				It("should allow authorized user", func() {
+
+					req.Request.TLS = &tls.ConnectionState{}
+					req.Request.TLS.PeerCertificates = append(req.Request.TLS.PeerCertificates, fakecert)
+
+					result, err := app.generateAccessReview(req)
+					Expect(err).ToNot(HaveOccurred())
+					result.Status.Allowed = true
+
+					server.AppendHandlers(
+						ghttp.CombineHandlers(
+							ghttp.VerifyRequest("POST", "/apis/authorization.k8s.io/v1/subjectaccessreviews"),
+							ghttp.RespondWithJSONEncoded(http.StatusOK, result),
+						),
+					)
+
+					allowed, _, err := app.Authorize(req)
+					Expect(err).ToNot(HaveOccurred())
+					Expect(allowed).To(BeTrue())
+				})
+
+				It("should not allow user if auth check fails", func() {
+
+					req.Request.TLS = &tls.ConnectionState{}
+					req.Request.TLS.PeerCertificates = append(req.Request.TLS.PeerCertificates, fakecert)
+
+					server.AppendHandlers(
+						ghttp.CombineHandlers(
+							ghttp.VerifyRequest("POST", "/apis/authorization.k8s.io/v1/subjectaccessreviews"),
+							ghttp.RespondWithJSONEncoded(http.StatusInternalServerError, nil),
+						),
+					)
+
+					allowed, _, err := app.Authorize(req)
+					Expect(err).To(HaveOccurred())
+					Expect(allowed).To(BeFalse())
+				})
+			})
+
+			DescribeTable("should allow all users for info endpoints", func(path string) {
 				req.Request.URL.Path = path
 				allowed, _, err := app.Authorize(req)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(allowed).To(BeTrue())
 			},
-				table.Entry("root", "/"),
-				table.Entry("apis", "/apis"),
-				table.Entry("group", "/apis/subresources.kubevirt.io"),
-				table.Entry("version", "/apis/subresources.kubevirt.io/version"),
-				table.Entry("healthz", "/apis/subresources.kubevirt.io/healthz"),
+				// Root resources
+				Entry("root", "/"),
+				Entry("apis", "/apis"),
+				Entry("healthz", "/healthz"),
+				Entry("openapi", "/openapi/v2"),
+				Entry("start profiler", "/start-profiler"),
+				Entry("stop profiler", "/stop-profiler"),
+				Entry("dump profiler", "/dump-profiler"),
+				// Subresources v1
+				Entry("subresource v1 groupversion", "/apis/subresources.kubevirt.io/v1"),
+				Entry("subresource v1 version", "/apis/subresources.kubevirt.io/v1/version"),
+				Entry("subresource v1 guestfs", "/apis/subresources.kubevirt.io/v1/guestfs"),
+				Entry("subresource v1 healthz", "/apis/subresources.kubevirt.io/v1/healthz"),
+				Entry("subresource v1 start profiler", "/apis/subresources.kubevirt.io/v1/start-cluster-profiler"),
+				Entry("subresource v1 stop profiler", "/apis/subresources.kubevirt.io/v1/stop-cluster-profiler"),
+				Entry("subresource v1 dump profiler", "/apis/subresources.kubevirt.io/v1/dump-cluster-profiler"),
+				// Subresource v1alpha3
+				Entry("subresource v1alpha3 groupversion", "/apis/subresources.kubevirt.io/v1alpha3"),
+				Entry("subresource v1alpha3 version", "/apis/subresources.kubevirt.io/v1alpha3/version"),
+				Entry("subresource v1alpha3 guestfs", "/apis/subresources.kubevirt.io/v1alpha3/guestfs"),
+				Entry("subresource v1alpha3 healthz", "/apis/subresources.kubevirt.io/v1alpha3/healthz"),
+				Entry("subresource v1alpha3 start profiler", "/apis/subresources.kubevirt.io/v1alpha3/start-cluster-profiler"),
+				Entry("subresource v1alpha3 stop profiler", "/apis/subresources.kubevirt.io/v1alpha3/stop-cluster-profiler"),
+				Entry("subresource v1alpha3 dump profiler", "/apis/subresources.kubevirt.io/v1alpha3/dump-cluster-profiler"),
 			)
 
-			table.DescribeTable("should reject all users for unknown endpoint paths", func(path string) {
+			DescribeTable("should reject all users for unknown endpoint paths", func(path string) {
 				req.Request.TLS = &tls.ConnectionState{}
 				req.Request.TLS.PeerCertificates = append(req.Request.TLS.PeerCertificates, fakecert)
 				req.Request.URL.Path = path
@@ -169,10 +256,12 @@ var _ = Describe("Authorizer", func() {
 				Expect(allowed).To(BeFalse())
 
 			},
-				table.Entry("random1", "/apis/subresources.kubevirt.io/v1alpha3/madethisup"),
-				table.Entry("random2", "/1/2/3/4/5/6/7/8/9/0/1/2/3/4/5/6/7/8/9"),
-				table.Entry("no subresource provided", "/apis/subresources.kubevirt.io/v1alpha3/namespaces/default/virtualmachineinstances/testvmi"),
-				table.Entry("invalid resource type", "/apis/subresources.kubevirt.io/v1alpha3/namespaces/default/madeupresource/testvmi/console"),
+				Entry("random1", "/apis/subresources.kubevirt.io/v1alpha3/madethisup"),
+				Entry("random2", "/1/2/3/4/5/6/7/8/9/0/1/2/3/4/5/6/7/8/9"),
+				Entry("no subresource provided", "/apis/subresources.kubevirt.io/v1alpha3/namespaces/default/virtualmachineinstances/testvmi"),
+				Entry("invalid resource type", "/apis/subresources.kubevirt.io/v1alpha3/namespaces/default/madeupresource/testvmi/console"),
+				Entry("unknown namespaced resource endpoint", "/apis/subresources.kubevirt.io/v1/namespaces/default/madethisup/testvmi/console"),
+				Entry("unknown namespaced base resource endpoint", "/apis/subresources.kubevirt.io/v1/namespaces/default/madethisup"),
 			)
 		})
 
@@ -182,16 +271,16 @@ var _ = Describe("Authorizer", func() {
 
 	})
 
-	table.DescribeTable("should map verbs", func(httpVerb string, resourceName string, expectedRbacVerb string) {
+	DescribeTable("should map verbs", func(httpVerb string, resourceName string, expectedRbacVerb string) {
 		Expect(mapHttpVerbToRbacVerb(httpVerb, resourceName)).To(Equal(expectedRbacVerb))
 	},
-		table.Entry("http post to create", http.MethodPost, "", "create"),
-		table.Entry("http get with resource to get", http.MethodGet, "foo", "get"),
-		table.Entry("http get without resource to list", http.MethodGet, "", "list"),
-		table.Entry("http put to update", http.MethodPut, "", "update"),
-		table.Entry("http patch to patch", http.MethodPatch, "", "patch"),
-		table.Entry("http delete with reource to delete", http.MethodDelete, "foo", "delete"),
-		table.Entry("http delete without resource to deletecollection", http.MethodDelete, "", "deletecollection"),
+		Entry("http post to create", http.MethodPost, "", "create"),
+		Entry("http get with resource to get", http.MethodGet, "foo", "get"),
+		Entry("http get without resource to list", http.MethodGet, "", "list"),
+		Entry("http put to update", http.MethodPut, "", "update"),
+		Entry("http patch to patch", http.MethodPatch, "", "patch"),
+		Entry("http delete with reource to delete", http.MethodDelete, "foo", "delete"),
+		Entry("http delete without resource to deletecollection", http.MethodDelete, "", "deletecollection"),
 	)
 
 })

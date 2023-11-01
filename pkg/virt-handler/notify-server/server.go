@@ -35,8 +35,9 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 
-	v1 "kubevirt.io/client-go/api/v1"
+	v1 "kubevirt.io/api/core/v1"
 	"kubevirt.io/client-go/log"
+
 	notifyv1 "kubevirt.io/kubevirt/pkg/handler-launcher-com/notify/v1"
 	grpcutil "kubevirt.io/kubevirt/pkg/util/net/grpc"
 	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/api"
@@ -48,7 +49,7 @@ type Notify struct {
 	vmiStore  cache.Store
 }
 
-func (n *Notify) HandleDomainEvent(ctx context.Context, request *notifyv1.DomainEventRequest) (*notifyv1.Response, error) {
+func (n *Notify) HandleDomainEvent(_ context.Context, request *notifyv1.DomainEventRequest) (*notifyv1.Response, error) {
 	response := &notifyv1.Response{
 		Success: true,
 	}
@@ -75,7 +76,7 @@ func (n *Notify) HandleDomainEvent(ctx context.Context, request *notifyv1.Domain
 		}
 	}
 
-	log.Log.Object(domain).Infof("Received Domain Event of type %s", request.EventType)
+	log.Log.Object(domain).V(3).Infof("Received Domain Event of type %s", request.EventType)
 	switch request.EventType {
 	case string(watch.Added):
 		n.EventChan <- watch.Event{Type: watch.Added, Object: domain}
@@ -84,12 +85,13 @@ func (n *Notify) HandleDomainEvent(ctx context.Context, request *notifyv1.Domain
 	case string(watch.Deleted):
 		n.EventChan <- watch.Event{Type: watch.Deleted, Object: domain}
 	case string(watch.Error):
+		log.Log.Object(domain).Errorf("Domain error event with message: %s", status.Message)
 		n.EventChan <- watch.Event{Type: watch.Error, Object: status}
 	}
 	return response, nil
 }
 
-func (n *Notify) HandleK8SEvent(ctx context.Context, request *notifyv1.K8SEventRequest) (*notifyv1.Response, error) {
+func (n *Notify) HandleK8SEvent(_ context.Context, request *notifyv1.K8SEventRequest) (*notifyv1.Response, error) {
 	response := &notifyv1.Response{
 		Success: true,
 	}

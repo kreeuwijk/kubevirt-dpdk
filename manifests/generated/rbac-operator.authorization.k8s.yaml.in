@@ -17,6 +17,15 @@ metadata:
 rules:
 - apiGroups:
   - ""
+  resourceNames:
+  - kubevirt-ca
+  - kubevirt-export-ca
+  - kubevirt-virt-handler-certs
+  - kubevirt-virt-handler-server-certs
+  - kubevirt-operator-certs
+  - kubevirt-virt-api-certs
+  - kubevirt-controller-certs
+  - kubevirt-exportproxy-certs
   resources:
   - secrets
   verbs:
@@ -37,6 +46,23 @@ rules:
   - watch
   - patch
   - delete
+- apiGroups:
+  - route.openshift.io
+  resources:
+  - routes
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+  - patch
+  - delete
+- apiGroups:
+  - route.openshift.io
+  resources:
+  - routes/custom-host
+  verbs:
+  - create
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -61,14 +87,6 @@ metadata:
     kubevirt.io: ""
   name: kubevirt-operator
 rules:
-- apiGroups:
-  - ""
-  resources:
-  - secrets
-  verbs:
-  - create
-  - get
-  - update
 - apiGroups:
   - kubevirt.io
   resources:
@@ -96,6 +114,18 @@ rules:
   - delete
   - patch
 - apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - delete
+  - update
+  - create
+  - patch
+- apiGroups:
   - ""
   resources:
   - configmaps
@@ -110,6 +140,16 @@ rules:
   - get
   - list
   - watch
+  - create
+  - delete
+  - patch
+- apiGroups:
+  - apps
+  resources:
+  - controllerrevisions
+  verbs:
+  - watch
+  - list
   - create
   - delete
   - patch
@@ -222,14 +262,6 @@ rules:
   - update
   - patch
 - apiGroups:
-  - subresources.kubevirt.io
-  resources:
-  - virtualmachines/start
-  - virtualmachines/stop
-  - virtualmachines/restart
-  verbs:
-  - put
-- apiGroups:
   - ""
   resources:
   - namespaces
@@ -238,6 +270,22 @@ rules:
   - list
   - watch
   - patch
+- apiGroups:
+  - flavor.kubevirt.io
+  resources:
+  - virtualmachineflavors
+  - virtualmachineclusterflavors
+  - virtualmachinepreferences
+  - virtualmachineclusterpreferences
+  verbs:
+  - get
+  - delete
+  - create
+  - update
+  - patch
+  - list
+  - watch
+  - deletecollection
 - apiGroups:
   - ""
   resources:
@@ -256,6 +304,19 @@ rules:
   - get
   - list
   - watch
+  - patch
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumeclaims
+  verbs:
+  - get
+- apiGroups:
+  - kubevirt.io
+  resources:
+  - virtualmachines/status
+  verbs:
   - patch
 - apiGroups:
   - kubevirt.io
@@ -306,6 +367,52 @@ rules:
   - list
   - watch
 - apiGroups:
+  - snapshot.kubevirt.io
+  resources:
+  - virtualmachinesnapshots
+  - virtualmachinerestores
+  - virtualmachinesnapshotcontents
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - cdi.kubevirt.io
+  resources:
+  - datasources
+  - datavolumes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - instancetype.kubevirt.io
+  resources:
+  - virtualmachineinstancetypes
+  - virtualmachineclusterinstancetypes
+  - virtualmachinepreferences
+  - virtualmachineclusterpreferences
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - migrations.kubevirt.io
+  resources:
+  - migrationpolicies
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - controllerrevisions
+  verbs:
+  - create
+  - list
+  - get
+- apiGroups:
   - ""
   resources:
   - configmaps
@@ -313,6 +420,15 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+  - patch
 - apiGroups:
   - policy
   resources:
@@ -330,6 +446,7 @@ rules:
   - pods
   - configmaps
   - endpoints
+  - services
   verbs:
   - get
   - list
@@ -337,6 +454,19 @@ rules:
   - delete
   - update
   - create
+  - patch
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - delete
+  - update
+  - create
+  - patch
 - apiGroups:
   - ""
   resources:
@@ -348,9 +478,27 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - secrets
+  verbs:
+  - create
+- apiGroups:
+  - ""
+  resources:
   - pods/finalizers
   verbs:
   - update
+- apiGroups:
+  - ""
+  resources:
+  - pods/eviction
+  verbs:
+  - create
+- apiGroups:
+  - ""
+  resources:
+  - pods/status
+  verbs:
+  - patch
 - apiGroups:
   - ""
   resources:
@@ -362,6 +510,23 @@ rules:
   - update
   - patch
 - apiGroups:
+  - apps
+  resources:
+  - daemonsets
+  verbs:
+  - list
+- apiGroups:
+  - apps
+  resources:
+  - controllerrevisions
+  verbs:
+  - watch
+  - list
+  - create
+  - delete
+  - get
+  - update
+- apiGroups:
   - ""
   resources:
   - persistentvolumeclaims
@@ -369,6 +534,10 @@ rules:
   - get
   - list
   - watch
+  - create
+  - update
+  - delete
+  - patch
 - apiGroups:
   - snapshot.kubevirt.io
   resources:
@@ -376,11 +545,42 @@ rules:
   verbs:
   - '*'
 - apiGroups:
+  - export.kubevirt.io
+  resources:
+  - '*'
+  verbs:
+  - '*'
+- apiGroups:
+  - pool.kubevirt.io
+  resources:
+  - virtualmachinepools
+  - virtualmachinepools/finalizers
+  - virtualmachinepools/status
+  - virtualmachinepools/scale
+  verbs:
+  - watch
+  - list
+  - create
+  - delete
+  - update
+  - patch
+  - get
+- apiGroups:
   - kubevirt.io
   resources:
   - '*'
   verbs:
   - '*'
+- apiGroups:
+  - subresources.kubevirt.io
+  resources:
+  - virtualmachineinstances/addvolume
+  - virtualmachineinstances/removevolume
+  - virtualmachineinstances/freeze
+  - virtualmachineinstances/unfreeze
+  - virtualmachineinstances/softreboot
+  verbs:
+  - update
 - apiGroups:
   - cdi.kubevirt.io
   resources:
@@ -437,6 +637,75 @@ rules:
   - list
   - watch
 - apiGroups:
+  - instancetype.kubevirt.io
+  resources:
+  - virtualmachineinstancetypes
+  - virtualmachineclusterinstancetypes
+  - virtualmachinepreferences
+  - virtualmachineclusterpreferences
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - migrations.kubevirt.io
+  resources:
+  - migrationpolicies
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - clone.kubevirt.io
+  resources:
+  - virtualmachineclones
+  - virtualmachineclones/status
+  - virtualmachineclones/finalizers
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  resources:
+  - resourcequotas
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - route.openshift.io
+  resources:
+  - routes
+  verbs:
+  - list
+  - get
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - list
+  - get
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  verbs:
+  - list
+  - get
+  - watch
+- apiGroups:
   - kubevirt.io
   resources:
   - virtualmachineinstances
@@ -447,15 +716,20 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - persistentvolumeclaims
+  - nodes
   verbs:
+  - patch
+  - list
+  - watch
   - get
 - apiGroups:
   - ""
   resources:
-  - nodes
+  - configmaps
   verbs:
-  - patch
+  - get
+  - list
+  - watch
 - apiGroups:
   - ""
   resources:
@@ -480,7 +754,40 @@ rules:
   - list
   - watch
 - apiGroups:
+  - migrations.kubevirt.io
+  resources:
+  - migrationpolicies
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - export.kubevirt.io
+  resources:
+  - virtualmachineexports
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - kubevirt.io
+  resources:
+  - kubevirts
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resourceNames:
+  - kubevirt-export-ca
   resources:
   - configmaps
   verbs:
@@ -491,6 +798,7 @@ rules:
   - subresources.kubevirt.io
   resources:
   - version
+  - guestfs
   verbs:
   - get
   - list
@@ -499,8 +807,30 @@ rules:
   resources:
   - virtualmachineinstances/console
   - virtualmachineinstances/vnc
+  - virtualmachineinstances/vnc/screenshot
+  - virtualmachineinstances/portforward
+  - virtualmachineinstances/guestosinfo
+  - virtualmachineinstances/filesystemlist
+  - virtualmachineinstances/userlist
+  verbs:
+  - get
+- apiGroups:
+  - subresources.kubevirt.io
+  resources:
   - virtualmachineinstances/pause
   - virtualmachineinstances/unpause
+  - virtualmachineinstances/addvolume
+  - virtualmachineinstances/removevolume
+  - virtualmachineinstances/freeze
+  - virtualmachineinstances/unfreeze
+  - virtualmachineinstances/softreboot
+  verbs:
+  - update
+- apiGroups:
+  - subresources.kubevirt.io
+  resources:
+  - virtualmachines/expand-spec
+  - virtualmachines/portforward
   verbs:
   - get
 - apiGroups:
@@ -509,6 +839,17 @@ rules:
   - virtualmachines/start
   - virtualmachines/stop
   - virtualmachines/restart
+  - virtualmachines/addvolume
+  - virtualmachines/removevolume
+  - virtualmachines/migrate
+  - virtualmachines/memorydump
+  - virtualmachines/addinterface
+  verbs:
+  - update
+- apiGroups:
+  - subresources.kubevirt.io
+  resources:
+  - expand-vm-spec
   verbs:
   - update
 - apiGroups:
@@ -529,12 +870,112 @@ rules:
   - watch
   - deletecollection
 - apiGroups:
+  - snapshot.kubevirt.io
+  resources:
+  - virtualmachinesnapshots
+  - virtualmachinesnapshotcontents
+  - virtualmachinerestores
+  verbs:
+  - get
+  - delete
+  - create
+  - update
+  - patch
+  - list
+  - watch
+  - deletecollection
+- apiGroups:
+  - export.kubevirt.io
+  resources:
+  - virtualmachineexports
+  verbs:
+  - get
+  - delete
+  - create
+  - update
+  - patch
+  - list
+  - watch
+  - deletecollection
+- apiGroups:
+  - clone.kubevirt.io
+  resources:
+  - virtualmachineclones
+  verbs:
+  - get
+  - delete
+  - create
+  - update
+  - patch
+  - list
+  - watch
+  - deletecollection
+- apiGroups:
+  - instancetype.kubevirt.io
+  resources:
+  - virtualmachineinstancetypes
+  - virtualmachineclusterinstancetypes
+  - virtualmachinepreferences
+  - virtualmachineclusterpreferences
+  verbs:
+  - get
+  - delete
+  - create
+  - update
+  - patch
+  - list
+  - watch
+  - deletecollection
+- apiGroups:
+  - pool.kubevirt.io
+  resources:
+  - virtualmachinepools
+  verbs:
+  - get
+  - delete
+  - create
+  - update
+  - patch
+  - list
+  - watch
+  - deletecollection
+- apiGroups:
+  - migrations.kubevirt.io
+  resources:
+  - migrationpolicies
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - subresources.kubevirt.io
   resources:
   - virtualmachineinstances/console
   - virtualmachineinstances/vnc
+  - virtualmachineinstances/vnc/screenshot
+  - virtualmachineinstances/portforward
+  - virtualmachineinstances/guestosinfo
+  - virtualmachineinstances/filesystemlist
+  - virtualmachineinstances/userlist
+  verbs:
+  - get
+- apiGroups:
+  - subresources.kubevirt.io
+  resources:
   - virtualmachineinstances/pause
   - virtualmachineinstances/unpause
+  - virtualmachineinstances/addvolume
+  - virtualmachineinstances/removevolume
+  - virtualmachineinstances/freeze
+  - virtualmachineinstances/unfreeze
+  - virtualmachineinstances/softreboot
+  verbs:
+  - update
+- apiGroups:
+  - subresources.kubevirt.io
+  resources:
+  - virtualmachines/expand-spec
+  - virtualmachines/portforward
   verbs:
   - get
 - apiGroups:
@@ -543,6 +984,17 @@ rules:
   - virtualmachines/start
   - virtualmachines/stop
   - virtualmachines/restart
+  - virtualmachines/addvolume
+  - virtualmachines/removevolume
+  - virtualmachines/migrate
+  - virtualmachines/memorydump
+  - virtualmachines/addinterface
+  verbs:
+  - update
+- apiGroups:
+  - subresources.kubevirt.io
+  resources:
+  - expand-vm-spec
   verbs:
   - update
 - apiGroups:
@@ -562,6 +1014,101 @@ rules:
   - list
   - watch
 - apiGroups:
+  - snapshot.kubevirt.io
+  resources:
+  - virtualmachinesnapshots
+  - virtualmachinesnapshotcontents
+  - virtualmachinerestores
+  verbs:
+  - get
+  - delete
+  - create
+  - update
+  - patch
+  - list
+  - watch
+- apiGroups:
+  - export.kubevirt.io
+  resources:
+  - virtualmachineexports
+  verbs:
+  - get
+  - delete
+  - create
+  - update
+  - patch
+  - list
+  - watch
+- apiGroups:
+  - clone.kubevirt.io
+  resources:
+  - virtualmachineclones
+  verbs:
+  - get
+  - delete
+  - create
+  - update
+  - patch
+  - list
+  - watch
+- apiGroups:
+  - instancetype.kubevirt.io
+  resources:
+  - virtualmachineinstancetypes
+  - virtualmachineclusterinstancetypes
+  - virtualmachinepreferences
+  - virtualmachineclusterpreferences
+  verbs:
+  - get
+  - delete
+  - create
+  - update
+  - patch
+  - list
+  - watch
+- apiGroups:
+  - pool.kubevirt.io
+  resources:
+  - virtualmachinepools
+  verbs:
+  - get
+  - delete
+  - create
+  - update
+  - patch
+  - list
+  - watch
+- apiGroups:
+  - kubevirt.io
+  resources:
+  - kubevirts
+  verbs:
+  - get
+  - list
+- apiGroups:
+  - migrations.kubevirt.io
+  resources:
+  - migrationpolicies
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - subresources.kubevirt.io
+  resources:
+  - virtualmachines/expand-spec
+  - virtualmachineinstances/guestosinfo
+  - virtualmachineinstances/filesystemlist
+  - virtualmachineinstances/userlist
+  verbs:
+  - get
+- apiGroups:
+  - subresources.kubevirt.io
+  resources:
+  - expand-vm-spec
+  verbs:
+  - update
+- apiGroups:
   - kubevirt.io
   resources:
   - virtualmachines
@@ -569,6 +1116,59 @@ rules:
   - virtualmachineinstancepresets
   - virtualmachineinstancereplicasets
   - virtualmachineinstancemigrations
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - snapshot.kubevirt.io
+  resources:
+  - virtualmachinesnapshots
+  - virtualmachinesnapshotcontents
+  - virtualmachinerestores
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - export.kubevirt.io
+  resources:
+  - virtualmachineexports
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - clone.kubevirt.io
+  resources:
+  - virtualmachineclones
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - instancetype.kubevirt.io
+  resources:
+  - virtualmachineinstancetypes
+  - virtualmachineclusterinstancetypes
+  - virtualmachinepreferences
+  - virtualmachineclusterpreferences
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pool.kubevirt.io
+  resources:
+  - virtualmachinepools
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - migrations.kubevirt.io
+  resources:
+  - migrationpolicies
   verbs:
   - get
   - list

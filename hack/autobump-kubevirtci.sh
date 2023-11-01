@@ -52,13 +52,13 @@ if git diff --name-only --exit-code HEAD; then
 fi
 
 title="Run hack/bump-kubevirtci.sh, updating to ${kubevirtci_git_hash:0:8}..."
-git commit -m "${title}"
-git push -f "https://${user}@github.com/kubevirt/kubevirt.git" HEAD:kubevirtci
+git commit -s -m "${title}"
+git push -f "https://${user}@github.com/${user}/kubevirt.git" HEAD:kubevirtci
 
-echo "Creating PR to merge ${user}:kubevirtci into master..." >&2
-/pr-creator -- \
+echo "Creating PR to merge ${user}:kubevirtci into main..." >&2
+pr-creator \
     --github-token-path="${token}" \
-    --org=kubevirt --repo=kubevirt --branch=master \
+    --org=kubevirt --repo=kubevirt --branch=main \
     --title="${title}" --match-title="Run hack/bump-kubevirtci.sh" \
     --body="Automatic kubevirtci update to ${kubevirtci_git_hash}. Please review" \
     --source="${user}":kubevirtci \

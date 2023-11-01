@@ -1,5 +1,5 @@
 /*
-Copyright 2020 The KubeVirt Authors.
+Copyright 2023 The KubeVirt Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -21,12 +21,15 @@ package fake
 import (
 	rest "k8s.io/client-go/rest"
 	testing "k8s.io/client-go/testing"
-
 	v1alpha1 "kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/snapshot/v1alpha1"
 )
 
 type FakeSnapshotV1alpha1 struct {
 	*testing.Fake
+}
+
+func (c *FakeSnapshotV1alpha1) VirtualMachineRestores(namespace string) v1alpha1.VirtualMachineRestoreInterface {
+	return &FakeVirtualMachineRestores{c, namespace}
 }
 
 func (c *FakeSnapshotV1alpha1) VirtualMachineSnapshots(namespace string) v1alpha1.VirtualMachineSnapshotInterface {

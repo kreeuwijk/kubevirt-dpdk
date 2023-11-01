@@ -20,46 +20,38 @@
 package hostdisk
 
 import (
+	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path"
 	"strings"
 
 	"github.com/golang/mock/gomock"
-	. "github.com/onsi/ginkgo"
-	"github.com/onsi/ginkgo/extensions/table"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	k8sv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/record"
 
-	v1 "kubevirt.io/client-go/api/v1"
+	"kubevirt.io/kubevirt/pkg/safepath"
+
+	"kubevirt.io/client-go/api"
+
+	v1 "kubevirt.io/api/core/v1"
 	"kubevirt.io/client-go/kubecli"
+
+	"kubevirt.io/kubevirt/pkg/testutils"
 )
 
-type MockNotifier struct {
-	Events chan k8sv1.Event
-}
-
-func (m MockNotifier) SendK8sEvent(vmi *v1.VirtualMachineInstance, severity string, reason string, message string) error {
-	event := k8sv1.Event{
-		InvolvedObject: k8sv1.ObjectReference{
-			Namespace: vmi.Namespace,
-			Name:      vmi.Name,
-		},
-		Type:    severity,
-		Reason:  reason,
-		Message: message,
-	}
-	m.Events <- event
-	return nil
-}
-
 var _ = Describe("HostDisk", func() {
-	var tempDir string
-
+	var (
+		tempDir                    string
+		recorder                   *record.FakeRecorder
+		hostDiskCreator            DiskImgCreator
+		hostDiskCreatorWithReserve DiskImgCreator
+	)
 	addHostDisk := func(vmi *v1.VirtualMachineInstance, volumeName string, hostDiskType v1.HostDiskType, capacity string) {
 		var quantity resource.Quantity
 
@@ -102,19 +94,24 @@ var _ = Describe("HostDisk", func() {
 
 	BeforeEach(func() {
 		var err error
-		tempDir, err = ioutil.TempDir("", "host-disk-images")
-		setDiskDirectory(tempDir)
+		tempDir, err = os.MkdirTemp("", "host-disk-images")
+		Expect(setDiskDirectory(tempDir)).To(Succeed())
 		Expect(err).NotTo(HaveOccurred())
+
+		recorder = record.NewFakeRecorder(100)
+		recorder.IncludeObject = true
+
+		root, err := safepath.JoinAndResolveWithRelativeRoot("/")
+		Expect(err).NotTo(HaveOccurred())
+
+		hostDiskCreator = NewHostDiskCreator(recorder, 0, 0, root)
+		hostDiskCreatorWithReserve = NewHostDiskCreator(recorder, 10, 1048576, root)
+
 	})
 
 	AfterEach(func() {
-		os.RemoveAll(tempDir)
+		Expect(os.RemoveAll(tempDir)).To(Succeed())
 	})
-
-	notifier := MockNotifier{
-		Events: make(chan k8sv1.Event, 10),
-	}
-	hostDiskCreator := NewHostDiskCreator(notifier, 0)
 
 	Describe("HostDisk with 'Disk' type", func() {
 		It("Should not create a disk.img when it exists", func() {
@@ -122,7 +119,7 @@ var _ = Describe("HostDisk", func() {
 			tmpDiskImg := createTempDiskImg("volume1")
 
 			By("Creating a new minimal vmi")
-			vmi := v1.NewMinimalVMI("fake-vmi")
+			vmi := api.NewMinimalVMI("fake-vmi")
 
 			By("Adding a HostDisk volume for existing disk.img")
 			addHostDisk(vmi, "volume1", v1.HostDiskExists, "")
@@ -138,7 +135,7 @@ var _ = Describe("HostDisk", func() {
 		})
 		It("Should not create a disk.img when it does not exist", func() {
 			By("Creating a new minimal vmi")
-			vmi := v1.NewMinimalVMI("fake-vmi")
+			vmi := api.NewMinimalVMI("fake-vmi")
 
 			By("Adding a HostDisk volume")
 			addHostDisk(vmi, "volume1", v1.HostDiskExists, "")
@@ -149,7 +146,7 @@ var _ = Describe("HostDisk", func() {
 
 			// disk.img should not exist
 			_, err = os.Stat(vmi.Spec.Volumes[0].HostDisk.Path)
-			Expect(true).To(Equal(os.IsNotExist(err)))
+			Expect(true).To(Equal(errors.Is(err, os.ErrNotExist)))
 		})
 	})
 
@@ -158,7 +155,7 @@ var _ = Describe("HostDisk", func() {
 			Context("With non existing disk.img", func() {
 				It("Should create disk.img if there is enough space", func() {
 					By("Creating a new minimal vmi")
-					vmi := v1.NewMinimalVMI("fake-vmi")
+					vmi := api.NewMinimalVMI("fake-vmi")
 
 					By("Adding a HostDisk volumes")
 					addHostDisk(vmi, "volume1", v1.HostDiskExistsOrCreate, "64Mi")
@@ -184,7 +181,7 @@ var _ = Describe("HostDisk", func() {
 				})
 				It("Should stop creating disk images if there is not enough space and should return err", func() {
 					By("Creating a new minimal vmi")
-					vmi := v1.NewMinimalVMI("fake-vmi")
+					vmi := api.NewMinimalVMI("fake-vmi")
 
 					By("Adding a HostDisk volumes")
 					addHostDisk(vmi, "volume1", v1.HostDiskExistsOrCreate, "64Mi")
@@ -203,15 +200,74 @@ var _ = Describe("HostDisk", func() {
 					Expect(img1.Size()).To(Equal(int64(67108864))) // 64Mi
 
 					_, err = os.Stat(vmi.Spec.Volumes[1].HostDisk.Path)
-					Expect(true).To(Equal(os.IsNotExist(err)))
+					Expect(true).To(Equal(errors.Is(err, os.ErrNotExist)))
 
 					_, err = os.Stat(vmi.Spec.Volumes[2].HostDisk.Path)
-					Expect(true).To(Equal(os.IsNotExist(err)))
+					Expect(true).To(Equal(errors.Is(err, os.ErrNotExist)))
 				})
 
-				It("Should take lessPVCSpaceToleration into account when creating disk images", func(done Done) {
+				It("Should NOT subtract reserve if there is enough space on storage for requested size", func() {
 					By("Creating a new minimal vmi")
-					vmi := v1.NewMinimalVMI("fake-vmi")
+					vmi := api.NewMinimalVMI("fake-vmi")
+
+					By("Adding HostDisk volumes")
+					addHostDisk(vmi, "volume1", v1.HostDiskExistsOrCreate, "64Mi")
+
+					By("Executing CreateHostDisks func which should create a full-size disk.img")
+					err := hostDiskCreatorWithReserve.Create(vmi)
+					Expect(err).NotTo(HaveOccurred())
+
+					img1, err := os.Stat(vmi.Spec.Volumes[0].HostDisk.Path)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(img1.Size()).To(Equal(int64(67108864))) // 64Mi
+				})
+
+				It("Should subtract reserve if there is NOT enough space on storage for requested size", func() {
+					By("Creating a new minimal vmi")
+					vmi := api.NewMinimalVMI("fake-vmi")
+					dirAvailable := uint64(64 << 20)
+
+					hostDiskCreatorWithReserve.dirBytesAvailableFunc = func(path string, reserve uint64) (uint64, error) {
+						return dirAvailable - reserve, nil
+					}
+
+					By("Adding HostDisk volume that is slightly too large for available bytes when reserve is accounted for")
+					addHostDisk(vmi, "volume1", v1.HostDiskExistsOrCreate, "64Mi")
+
+					By("Executing CreateHostDisks func which should create disk.img minus reserve")
+					err := hostDiskCreatorWithReserve.Create(vmi)
+					Expect(err).NotTo(HaveOccurred())
+
+					img1, err := os.Stat(vmi.Spec.Volumes[0].HostDisk.Path)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(img1.Size()).To(BeNumerically("==", dirAvailable-hostDiskCreatorWithReserve.minimumPVCReserveBytes)) // 64Mi minus reserve
+				})
+
+				It("Should refuse to create disk image if reserve causes image to exceed lessPVCSpaceToleration", func() {
+					By("Creating a new minimal vmi")
+					vmi := api.NewMinimalVMI("fake-vmi")
+					dirAvailable := uint64(64 << 20)
+
+					hostDiskCreatorWithReserve.dirBytesAvailableFunc = func(path string, reserve uint64) (uint64, error) {
+						return dirAvailable - reserve, nil
+					}
+					hostDiskCreatorWithReserve.setlessPVCSpaceToleration(1) // 1% of 64Mi, tolerate up to 671088 bytes lost
+
+					By("Adding HostDisk volume that is slightly too large for available bytes when reserve is accounted for")
+					addHostDisk(vmi, "volume1", v1.HostDiskExistsOrCreate, "64Mi")
+
+					By("Executing CreateHostDisks func which should NOT create disk.img minus reserve")
+					err := hostDiskCreatorWithReserve.Create(vmi)
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(ContainSubstring("unable to create"))
+
+					_, err = os.Stat(vmi.Spec.Volumes[0].HostDisk.Path)
+					Expect(true).To(Equal(errors.Is(err, os.ErrNotExist)))
+				})
+
+				It("Should take lessPVCSpaceToleration into account when creating disk images", func() {
+					By("Creating a new minimal vmi")
+					vmi := api.NewMinimalVMI("fake-vmi")
 
 					toleration := 5
 					hostDiskCreator.setlessPVCSpaceToleration(5)
@@ -221,7 +277,7 @@ var _ = Describe("HostDisk", func() {
 						return origSize * (100 - uint64(toleration) + uint64(diff)) / 100
 					}
 
-					fakeDirBytesAvailable := func(path string) (uint64, error) {
+					fakeDirBytesAvailable := func(path string, reserve uint64) (uint64, error) {
 						if strings.Contains(path, "volume1") {
 							// toleration +1
 							return calcToleratedSize(size64Mi, 1), nil
@@ -257,16 +313,10 @@ var _ = Describe("HostDisk", func() {
 					Expect(uint64(img2.Size())).To(Equal(calcToleratedSize(size64Mi, 0))) // 64Mi
 
 					_, err = os.Stat(vmi.Spec.Volumes[2].HostDisk.Path)
-					Expect(true).To(Equal(os.IsNotExist(err)))
+					Expect(true).To(Equal(errors.Is(err, os.ErrNotExist)))
 
-					event := <-notifier.Events
-					Expect(event.InvolvedObject.Namespace).To(Equal(vmi.Namespace))
-					Expect(event.InvolvedObject.Name).To(Equal(vmi.Name))
-					Expect(event.Type).To(Equal(EventTypeToleratedSmallPV))
-					Expect(event.Reason).To(Equal(EventReasonToleratedSmallPV))
-					Expect(event.Message).To(ContainSubstring("PV size too small"))
-					close(done)
-				}, 5)
+					testutils.ExpectEvent(recorder, "PV size too small")
+				})
 
 			})
 		})
@@ -276,7 +326,7 @@ var _ = Describe("HostDisk", func() {
 				tmpDiskImg := createTempDiskImg("volume1")
 
 				By("Creating a new minimal vmi")
-				vmi := v1.NewMinimalVMI("fake-vmi")
+				vmi := api.NewMinimalVMI("fake-vmi")
 
 				By("Adding a HostDisk volume")
 				addHostDisk(vmi, "volume1", v1.HostDiskExistsOrCreate, "128Mi")
@@ -298,10 +348,10 @@ var _ = Describe("HostDisk", func() {
 		})
 	})
 
-	Describe("HostDisk with unkown type", func() {
+	Describe("HostDisk with unknown type", func() {
 		It("Should not create a disk.img", func() {
 			By("Creating a new minimal vmi")
-			vmi := v1.NewMinimalVMI("fake-vmi")
+			vmi := api.NewMinimalVMI("fake-vmi")
 
 			By("Adding a HostDisk volume with unknown type")
 			addHostDisk(vmi, "volume1", "UnknownType", "")
@@ -312,7 +362,7 @@ var _ = Describe("HostDisk", func() {
 
 			// disk.img should not exist
 			_, err = os.Stat(vmi.Spec.Volumes[0].HostDisk.Path)
-			Expect(true).To(Equal(os.IsNotExist(err)))
+			Expect(true).To(Equal(errors.Is(err, os.ErrNotExist)))
 		})
 	})
 
@@ -327,20 +377,12 @@ var _ = Describe("HostDisk", func() {
 			virtClient.EXPECT().CoreV1().Return(kubeClient.CoreV1()).AnyTimes()
 		})
 
-		table.DescribeTable("PVC in", func(mode k8sv1.PersistentVolumeMode) {
+		DescribeTable("PVC in", func(mode k8sv1.PersistentVolumeMode, pvcReferenceObj string) {
+
+			pvcName := "madeup"
 
 			By("Creating the PVC")
 			namespace := "testns"
-			pvcName := "pvcDevice"
-			pvc := &k8sv1.PersistentVolumeClaim{
-				TypeMeta:   metav1.TypeMeta{Kind: "PersistentVolumeClaim", APIVersion: "v1"},
-				ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: pvcName},
-				Spec: k8sv1.PersistentVolumeClaimSpec{
-					VolumeMode: &mode,
-				},
-			}
-
-			virtClient.CoreV1().PersistentVolumeClaims(namespace).Create(pvc)
 
 			By("Creating a VMI with PVC volume")
 			volumeName := "pvc-volume"
@@ -348,7 +390,18 @@ var _ = Describe("HostDisk", func() {
 				{
 					Name: volumeName,
 					VolumeSource: v1.VolumeSource{
-						PersistentVolumeClaim: &k8sv1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName},
+						PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{PersistentVolumeClaimVolumeSource: k8sv1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName}},
+					}},
+			}
+
+			volumeStatus := []v1.VolumeStatus{
+				{
+					Name: volumeName,
+					PersistentVolumeClaimInfo: &v1.PersistentVolumeClaimInfo{
+						VolumeMode: &mode,
+						Capacity: map[k8sv1.ResourceName]resource.Quantity{
+							k8sv1.ResourceStorage: *resource.NewQuantity(1024*1024, resource.BinarySI),
+						},
 					},
 				},
 			}
@@ -357,21 +410,36 @@ var _ = Describe("HostDisk", func() {
 					Name: "testvmi", Namespace: namespace, UID: "1234",
 				},
 				Spec: v1.VirtualMachineInstanceSpec{Volumes: volumes, Domain: v1.DomainSpec{}},
+				Status: v1.VirtualMachineInstanceStatus{
+					VolumeStatus: volumeStatus,
+				},
+			}
+
+			// Add a filesystem to vmi spec to test fs passthrough
+			if pvcReferenceObj == "filesystem" {
+				vmi.Spec.Domain.Devices.Filesystems = append(vmi.Spec.Domain.Devices.Filesystems, v1.Filesystem{
+					Name:     volumeName,
+					Virtiofs: &v1.FilesystemVirtiofs{},
+				})
 			}
 
 			By("Replacing PVCs with hostdisks")
-			ReplacePVCByHostDisk(vmi, virtClient)
+			Expect(ReplacePVCByHostDisk(vmi)).To(Succeed())
 
-			Expect(len(vmi.Spec.Volumes)).To(Equal(1), "There should still be 1 volume")
+			Expect(vmi.Spec.Volumes).To(HaveLen(1), "There should still be 1 volume")
 
-			if mode == k8sv1.PersistentVolumeFilesystem {
+			if mode == k8sv1.PersistentVolumeFilesystem && pvcReferenceObj == "disk" {
 				Expect(vmi.Spec.Volumes[0].HostDisk).NotTo(BeNil(), "There should be a hostdisk volume")
 				Expect(vmi.Spec.Volumes[0].HostDisk.Type).To(Equal(v1.HostDiskExistsOrCreate), "Correct hostdisk type")
 				Expect(vmi.Spec.Volumes[0].HostDisk.Path).NotTo(BeNil(), "Hostdisk path is filled")
 				Expect(vmi.Spec.Volumes[0].HostDisk.Capacity).NotTo(BeNil(), "Hostdisk capacity is filled")
 
 				Expect(vmi.Spec.Volumes[0].PersistentVolumeClaim).To(BeNil(), "There shouldn't be a PVC volume anymore")
-			} else if mode == k8sv1.PersistentVolumeBlock {
+			} else if mode == k8sv1.PersistentVolumeBlock && pvcReferenceObj == "disk" {
+				Expect(vmi.Spec.Volumes[0].HostDisk).To(BeNil(), "There should be no hostdisk volume")
+				Expect(vmi.Spec.Volumes[0].PersistentVolumeClaim).ToNot(BeNil(), "There should still be a PVC volume")
+				Expect(vmi.Spec.Volumes[0].PersistentVolumeClaim.ClaimName).To(Equal(pvcName), "There should still be the correct PVC volume")
+			} else if mode == k8sv1.PersistentVolumeFilesystem && pvcReferenceObj == "filesystem" {
 				Expect(vmi.Spec.Volumes[0].HostDisk).To(BeNil(), "There should be no hostdisk volume")
 				Expect(vmi.Spec.Volumes[0].PersistentVolumeClaim).ToNot(BeNil(), "There should still be a PVC volume")
 				Expect(vmi.Spec.Volumes[0].PersistentVolumeClaim.ClaimName).To(Equal(pvcName), "There should still be the correct PVC volume")
@@ -380,8 +448,10 @@ var _ = Describe("HostDisk", func() {
 			}
 
 		},
-			table.Entry("filemode", k8sv1.PersistentVolumeFilesystem),
-			table.Entry("blockmode", k8sv1.PersistentVolumeBlock),
+
+			Entry("filemode", k8sv1.PersistentVolumeFilesystem, "disk"),
+			Entry("blockmode", k8sv1.PersistentVolumeBlock, "disk"),
+			Entry("filesystem passthrough", k8sv1.PersistentVolumeFilesystem, "filesystem"),
 		)
 	})
 

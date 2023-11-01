@@ -20,55 +20,65 @@
 package tests_test
 
 import (
+	"context"
 	"encoding/xml"
-
 	"fmt"
 
-	. "github.com/onsi/ginkgo"
-	"github.com/onsi/ginkgo/extensions/table"
+	"kubevirt.io/kubevirt/tests/decorators"
+
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"kubevirt.io/kubevirt/tests/framework/checks"
+	"kubevirt.io/kubevirt/tests/framework/kubevirt"
+	"kubevirt.io/kubevirt/tests/testsuite"
 
 	k8sv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1 "kubevirt.io/client-go/api/v1"
+	v1 "kubevirt.io/api/core/v1"
 	"kubevirt.io/client-go/kubecli"
+
 	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/api"
 	"kubevirt.io/kubevirt/tests"
+	cd "kubevirt.io/kubevirt/tests/containerdisk"
+	"kubevirt.io/kubevirt/tests/libnode"
+	"kubevirt.io/kubevirt/tests/libwait"
 )
 
-var _ = Describe("IOThreads", func() {
-	tests.FlagParse()
-
-	virtClient, err := kubecli.GetKubevirtClient()
-	tests.PanicOnError(err)
+var _ = Describe("[sig-compute]IOThreads", decorators.SigCompute, func() {
+	var virtClient kubecli.KubevirtClient
 
 	var vmi *v1.VirtualMachineInstance
 	dedicated := true
 
 	BeforeEach(func() {
-		tests.BeforeTestCleanup()
-		vmi = tests.NewRandomVMIWithEphemeralDisk(tests.ContainerDiskFor(tests.ContainerDiskAlpine))
+		virtClient = kubevirt.Client()
+
+		vmi = tests.NewRandomVMIWithEphemeralDisk(cd.ContainerDiskFor(cd.ContainerDiskAlpine))
 	})
 
 	Context("IOThreads Policies", func() {
+		var availableCPUs int
 
-		availableCPUs := tests.GetHighestCPUNumberAmongNodes(virtClient)
+		BeforeEach(func() {
+			availableCPUs = libnode.GetHighestCPUNumberAmongNodes(virtClient)
+		})
 
 		It("[test_id:4122]Should honor shared ioThreadsPolicy for single disk", func() {
 			policy := v1.IOThreadsPolicyShared
 			vmi.Spec.Domain.IOThreadsPolicy = &policy
 
-			vmi, err := virtClient.VirtualMachineInstance(tests.NamespaceTestDefault).Create(vmi)
+			vmi, err := virtClient.VirtualMachineInstance(testsuite.GetTestNamespace(vmi)).Create(context.Background(), vmi)
 			Expect(err).ToNot(HaveOccurred())
 
-			tests.WaitForSuccessfulVMIStart(vmi)
+			libwait.WaitForSuccessfulVMIStart(vmi)
 
 			getOptions := metav1.GetOptions{}
 			var newVMI *v1.VirtualMachineInstance
 
-			newVMI, err = virtClient.VirtualMachineInstance(tests.NamespaceTestDefault).Get(vmi.Name, &getOptions)
+			newVMI, err = virtClient.VirtualMachineInstance(testsuite.GetTestNamespace(vmi)).Get(context.Background(), vmi.Name, &getOptions)
 			Expect(err).ToNot(HaveOccurred())
 
 			domain, err := tests.GetRunningVirtualMachineInstanceDomainXML(virtClient, vmi)
@@ -79,7 +89,7 @@ var _ = Describe("IOThreads", func() {
 			expectedIOThreads := 1
 			Expect(int(domSpec.IOThreads.IOThreads)).To(Equal(expectedIOThreads))
 
-			Expect(len(newVMI.Spec.Domain.Devices.Disks)).To(Equal(1))
+			Expect(newVMI.Spec.Domain.Devices.Disks).To(HaveLen(1))
 		})
 
 		It("[test_id:864][ref_id:2065] Should honor a mix of shared and dedicated ioThreadsPolicy", func() {
@@ -89,20 +99,20 @@ var _ = Describe("IOThreads", func() {
 			// The disk that came with the VMI
 			vmi.Spec.Domain.Devices.Disks[0].DedicatedIOThread = &dedicated
 
-			tests.AddEphemeralDisk(vmi, "shr1", "virtio", tests.ContainerDiskFor(tests.ContainerDiskCirros))
-			tests.AddEphemeralDisk(vmi, "shr2", "virtio", tests.ContainerDiskFor(tests.ContainerDiskCirros))
+			tests.AddEphemeralDisk(vmi, "shr1", v1.DiskBusVirtio, cd.ContainerDiskFor(cd.ContainerDiskCirros))
+			tests.AddEphemeralDisk(vmi, "shr2", v1.DiskBusVirtio, cd.ContainerDiskFor(cd.ContainerDiskCirros))
 
 			By("Creating VMI with 1 dedicated and 2 shared ioThreadPolicies")
-			vmi, err := virtClient.VirtualMachineInstance(tests.NamespaceTestDefault).Create(vmi)
+			vmi, err := virtClient.VirtualMachineInstance(testsuite.GetTestNamespace(vmi)).Create(context.Background(), vmi)
 			Expect(err).ToNot(HaveOccurred())
 
-			tests.WaitForSuccessfulVMIStart(vmi)
+			libwait.WaitForSuccessfulVMIStart(vmi)
 
 			getOptions := metav1.GetOptions{}
 			var newVMI *v1.VirtualMachineInstance
 
 			By("Fetching the VMI from the cluster")
-			newVMI, err = virtClient.VirtualMachineInstance(tests.NamespaceTestDefault).Get(vmi.Name, &getOptions)
+			newVMI, err = virtClient.VirtualMachineInstance(testsuite.GetTestNamespace(vmi)).Get(context.Background(), vmi.Name, &getOptions)
 			Expect(err).ToNot(HaveOccurred())
 
 			By("Fetching the domain XML from the running pod")
@@ -116,7 +126,7 @@ var _ = Describe("IOThreads", func() {
 			Expect(int(domSpec.IOThreads.IOThreads)).To(Equal(expectedIOThreads))
 
 			By("Ensuring there are the expected number of disks")
-			Expect(len(newVMI.Spec.Domain.Devices.Disks)).To(Equal(len(vmi.Spec.Domain.Devices.Disks)))
+			Expect(newVMI.Spec.Domain.Devices.Disks).To(HaveLen(len(vmi.Spec.Domain.Devices.Disks)))
 
 			By("Verifying the ioThread mapping for disks")
 			disk0, err := getDiskByName(domSpec, "disk0")
@@ -132,7 +142,7 @@ var _ = Describe("IOThreads", func() {
 			Expect(*disk0.Driver.IOThread).ToNot(Equal(*disk1.Driver.IOThread))
 		})
 
-		table.DescribeTable("[ref_id:2065] should honor auto ioThreadPolicy", func(numCpus int, expectedIOThreads int) {
+		DescribeTable("[ref_id:2065] should honor auto ioThreadPolicy", func(numCpus int, expectedIOThreads int) {
 			Expect(numCpus).To(BeNumerically("<=", availableCPUs),
 				fmt.Sprintf("Testing environment only has nodes with %d CPUs available, but required are %d CPUs", availableCPUs, numCpus),
 			)
@@ -142,28 +152,28 @@ var _ = Describe("IOThreads", func() {
 
 			vmi.Spec.Domain.Devices.Disks[0].DedicatedIOThread = &dedicated
 
-			tests.AddEphemeralDisk(vmi, "ded2", "virtio", tests.ContainerDiskFor(tests.ContainerDiskCirros))
+			tests.AddEphemeralDisk(vmi, "ded2", v1.DiskBusVirtio, cd.ContainerDiskFor(cd.ContainerDiskCirros))
 			vmi.Spec.Domain.Devices.Disks[1].DedicatedIOThread = &dedicated
 
-			tests.AddEphemeralDisk(vmi, "shr1", "virtio", tests.ContainerDiskFor(tests.ContainerDiskCirros))
-			tests.AddEphemeralDisk(vmi, "shr2", "virtio", tests.ContainerDiskFor(tests.ContainerDiskCirros))
-			tests.AddEphemeralDisk(vmi, "shr3", "virtio", tests.ContainerDiskFor(tests.ContainerDiskCirros))
-			tests.AddEphemeralDisk(vmi, "shr4", "virtio", tests.ContainerDiskFor(tests.ContainerDiskCirros))
+			tests.AddEphemeralDisk(vmi, "shr1", v1.DiskBusVirtio, cd.ContainerDiskFor(cd.ContainerDiskCirros))
+			tests.AddEphemeralDisk(vmi, "shr2", v1.DiskBusVirtio, cd.ContainerDiskFor(cd.ContainerDiskCirros))
+			tests.AddEphemeralDisk(vmi, "shr3", v1.DiskBusVirtio, cd.ContainerDiskFor(cd.ContainerDiskCirros))
+			tests.AddEphemeralDisk(vmi, "shr4", v1.DiskBusVirtio, cd.ContainerDiskFor(cd.ContainerDiskCirros))
 
 			cpuReq := resource.MustParse(fmt.Sprintf("%d", numCpus))
 			vmi.Spec.Domain.Resources.Requests[k8sv1.ResourceCPU] = cpuReq
 
 			By("Creating VMI with 2 dedicated and 4 shared ioThreadPolicies")
-			vmi, err := virtClient.VirtualMachineInstance(tests.NamespaceTestDefault).Create(vmi)
+			vmi, err := virtClient.VirtualMachineInstance(testsuite.GetTestNamespace(vmi)).Create(context.Background(), vmi)
 			Expect(err).ToNot(HaveOccurred())
 
-			tests.WaitForSuccessfulVMIStart(vmi)
+			libwait.WaitForSuccessfulVMIStart(vmi)
 
 			getOptions := metav1.GetOptions{}
 			var newVMI *v1.VirtualMachineInstance
 
 			By("Fetching the VMI from the cluster")
-			newVMI, err = virtClient.VirtualMachineInstance(tests.NamespaceTestDefault).Get(vmi.Name, &getOptions)
+			newVMI, err = virtClient.VirtualMachineInstance(testsuite.GetTestNamespace(vmi)).Get(context.Background(), vmi.Name, &getOptions)
 			Expect(err).ToNot(HaveOccurred())
 
 			By("Fetching the domain XML from the running pod")
@@ -176,7 +186,7 @@ var _ = Describe("IOThreads", func() {
 			Expect(int(domSpec.IOThreads.IOThreads)).To(Equal(expectedIOThreads))
 
 			By("Ensuring there are the expected number of disks")
-			Expect(len(newVMI.Spec.Domain.Devices.Disks)).To(Equal(len(vmi.Spec.Domain.Devices.Disks)))
+			Expect(newVMI.Spec.Domain.Devices.Disks).To(HaveLen(len(vmi.Spec.Domain.Devices.Disks)))
 
 			By("Verifying the ioThread mapping for disks")
 			disk0, err := getDiskByName(domSpec, "disk0")
@@ -211,17 +221,19 @@ var _ = Describe("IOThreads", func() {
 		},
 			// special case: there's always at least one thread for the shared pool:
 			// two dedicated and one shared thread is 3 threads.
-			table.Entry("[test_id:3097]for one CPU", 1, 3),
-			table.Entry("[test_id:856] for two CPUs", 2, 4),
-			table.Entry("[test_id:3095] for three CPUs", 3, 6),
+			Entry("[test_id:3097]for one CPU", 1, 3),
+			Entry("[test_id:856] for two CPUs", 2, 4),
+			Entry("[test_id:3095] for three CPUs", 3, 6),
 			// there's only 6 threads expected because there's 6 total disks, even
 			// though the limit would have supported 8.
-			table.Entry("[test_id:3096]for four CPUs", 4, 6),
+			Entry("[test_id:3096]for four CPUs", 4, 6),
 		)
 
 		// IOThread with Emulator Thread
 
 		It("[test_id:4025]Should place io and emulator threads on the same pcpu with auto ioThreadsPolicy", func() {
+			checks.SkipTestIfNoCPUManager()
+
 			policy := v1.IOThreadsPolicyAuto
 			vmi.Spec.Domain.IOThreadsPolicy = &policy
 			vmi.Spec.Domain.CPU = &v1.CPU{
@@ -229,26 +241,21 @@ var _ = Describe("IOThreads", func() {
 				DedicatedCPUPlacement: true,
 				IsolateEmulatorThread: true,
 			}
-			vmi.Spec.Domain.Resources = v1.ResourceRequirements{
-				Requests: k8sv1.ResourceList{
-					k8sv1.ResourceMemory: resource.MustParse("64M"),
-				},
-			}
 
-			tests.AddEphemeralDisk(vmi, "disk1", "virtio", tests.ContainerDiskFor(tests.ContainerDiskCirros))
-			tests.AddEphemeralDisk(vmi, "ded2", "virtio", tests.ContainerDiskFor(tests.ContainerDiskCirros))
+			tests.AddEphemeralDisk(vmi, "disk1", v1.DiskBusVirtio, cd.ContainerDiskFor(cd.ContainerDiskCirros))
+			tests.AddEphemeralDisk(vmi, "ded2", v1.DiskBusVirtio, cd.ContainerDiskFor(cd.ContainerDiskCirros))
 			vmi.Spec.Domain.Devices.Disks[2].DedicatedIOThread = &dedicated
 
 			By("Starting a VirtualMachineInstance")
-			vmi, err := virtClient.VirtualMachineInstance(tests.NamespaceTestDefault).Create(vmi)
+			vmi, err := virtClient.VirtualMachineInstance(testsuite.GetTestNamespace(vmi)).Create(context.Background(), vmi)
 			Expect(err).ToNot(HaveOccurred())
-			tests.WaitForSuccessfulVMIStart(vmi)
+			libwait.WaitForSuccessfulVMIStart(vmi)
 
 			getOptions := metav1.GetOptions{}
 			var newVMI *v1.VirtualMachineInstance
 
 			By("Fetching the VMI from the cluster")
-			newVMI, err = virtClient.VirtualMachineInstance(tests.NamespaceTestDefault).Get(vmi.Name, &getOptions)
+			newVMI, err = virtClient.VirtualMachineInstance(testsuite.GetTestNamespace(vmi)).Get(context.Background(), vmi.Name, &getOptions)
 			Expect(err).ToNot(HaveOccurred())
 
 			By("Fetching the domain XML from the running pod")
@@ -263,7 +270,7 @@ var _ = Describe("IOThreads", func() {
 			Expect(int(domSpec.IOThreads.IOThreads)).To(Equal(expectedIOThreads))
 
 			By("Ensuring there are the expected number of disks")
-			Expect(len(newVMI.Spec.Domain.Devices.Disks)).To(Equal(len(vmi.Spec.Domain.Devices.Disks)))
+			Expect(newVMI.Spec.Domain.Devices.Disks).To(HaveLen(len(vmi.Spec.Domain.Devices.Disks)))
 
 			By("Verifying the ioThread mapping for disks")
 			disk0, err := getDiskByName(domSpec, "disk0")
@@ -285,7 +292,7 @@ var _ = Describe("IOThreads", func() {
 
 func getDiskByName(domSpec *api.DomainSpec, diskName string) (*api.Disk, error) {
 	for _, disk := range domSpec.Devices.Disks {
-		if disk.Alias.Name == diskName {
+		if disk.Alias.GetName() == diskName {
 			return &disk, nil
 		}
 	}

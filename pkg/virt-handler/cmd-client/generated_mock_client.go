@@ -5,8 +5,8 @@ package cmdclient
 
 import (
 	gomock "github.com/golang/mock/gomock"
+	v1 "kubevirt.io/api/core/v1"
 
-	v1 "kubevirt.io/client-go/api/v1"
 	v10 "kubevirt.io/kubevirt/pkg/handler-launcher-com/cmd/v1"
 	api "kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/api"
 	stats "kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/stats"
@@ -63,14 +63,54 @@ func (_mr *_MockLauncherClientRecorder) UnpauseVirtualMachine(arg0 interface{}) 
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "UnpauseVirtualMachine", arg0)
 }
 
-func (_m *MockLauncherClient) SyncMigrationTarget(vmi *v1.VirtualMachineInstance) error {
-	ret := _m.ctrl.Call(_m, "SyncMigrationTarget", vmi)
+func (_m *MockLauncherClient) FreezeVirtualMachine(vmi *v1.VirtualMachineInstance, unfreezeTimeoutSeconds int32) error {
+	ret := _m.ctrl.Call(_m, "FreezeVirtualMachine", vmi, unfreezeTimeoutSeconds)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-func (_mr *_MockLauncherClientRecorder) SyncMigrationTarget(arg0 interface{}) *gomock.Call {
-	return _mr.mock.ctrl.RecordCall(_mr.mock, "SyncMigrationTarget", arg0)
+func (_mr *_MockLauncherClientRecorder) FreezeVirtualMachine(arg0, arg1 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "FreezeVirtualMachine", arg0, arg1)
+}
+
+func (_m *MockLauncherClient) UnfreezeVirtualMachine(vmi *v1.VirtualMachineInstance) error {
+	ret := _m.ctrl.Call(_m, "UnfreezeVirtualMachine", vmi)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+func (_mr *_MockLauncherClientRecorder) UnfreezeVirtualMachine(arg0 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "UnfreezeVirtualMachine", arg0)
+}
+
+func (_m *MockLauncherClient) SyncMigrationTarget(vmi *v1.VirtualMachineInstance, options *v10.VirtualMachineOptions) error {
+	ret := _m.ctrl.Call(_m, "SyncMigrationTarget", vmi, options)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+func (_mr *_MockLauncherClientRecorder) SyncMigrationTarget(arg0, arg1 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "SyncMigrationTarget", arg0, arg1)
+}
+
+func (_m *MockLauncherClient) SoftRebootVirtualMachine(vmi *v1.VirtualMachineInstance) error {
+	ret := _m.ctrl.Call(_m, "SoftRebootVirtualMachine", vmi)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+func (_mr *_MockLauncherClientRecorder) SoftRebootVirtualMachine(arg0 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "SoftRebootVirtualMachine", arg0)
+}
+
+func (_m *MockLauncherClient) SignalTargetPodCleanup(vmi *v1.VirtualMachineInstance) error {
+	ret := _m.ctrl.Call(_m, "SignalTargetPodCleanup", vmi)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+func (_mr *_MockLauncherClientRecorder) SignalTargetPodCleanup(arg0 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "SignalTargetPodCleanup", arg0)
 }
 
 func (_m *MockLauncherClient) ShutdownVirtualMachine(vmi *v1.VirtualMachineInstance) error {
@@ -113,14 +153,24 @@ func (_mr *_MockLauncherClientRecorder) CancelVirtualMachineMigration(arg0 inter
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "CancelVirtualMachineMigration", arg0)
 }
 
-func (_m *MockLauncherClient) SetVirtualMachineGuestTime(vmi *v1.VirtualMachineInstance) error {
-	ret := _m.ctrl.Call(_m, "SetVirtualMachineGuestTime", vmi)
+func (_m *MockLauncherClient) FinalizeVirtualMachineMigration(vmi *v1.VirtualMachineInstance) error {
+	ret := _m.ctrl.Call(_m, "FinalizeVirtualMachineMigration", vmi)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-func (_mr *_MockLauncherClientRecorder) SetVirtualMachineGuestTime(arg0 interface{}) *gomock.Call {
-	return _mr.mock.ctrl.RecordCall(_mr.mock, "SetVirtualMachineGuestTime", arg0)
+func (_mr *_MockLauncherClientRecorder) FinalizeVirtualMachineMigration(arg0 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "FinalizeVirtualMachineMigration", arg0)
+}
+
+func (_m *MockLauncherClient) HotplugHostDevices(vmi *v1.VirtualMachineInstance) error {
+	ret := _m.ctrl.Call(_m, "HotplugHostDevices", vmi)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+func (_mr *_MockLauncherClientRecorder) HotplugHostDevices(arg0 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "HotplugHostDevices", arg0)
 }
 
 func (_m *MockLauncherClient) DeleteDomain(vmi *v1.VirtualMachineInstance) error {
@@ -190,6 +240,18 @@ func (_mr *_MockLauncherClientRecorder) GetFilesystems() *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "GetFilesystems")
 }
 
+func (_m *MockLauncherClient) Exec(_param0 string, _param1 string, _param2 []string, _param3 int32) (int, string, error) {
+	ret := _m.ctrl.Call(_m, "Exec", _param0, _param1, _param2, _param3)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(string)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+func (_mr *_MockLauncherClientRecorder) Exec(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "Exec", arg0, arg1, arg2, arg3)
+}
+
 func (_m *MockLauncherClient) Ping() error {
 	ret := _m.ctrl.Call(_m, "Ping")
 	ret0, _ := ret[0].(error)
@@ -200,10 +262,51 @@ func (_mr *_MockLauncherClientRecorder) Ping() *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "Ping")
 }
 
+func (_m *MockLauncherClient) GuestPing(_param0 string, _param1 int32) error {
+	ret := _m.ctrl.Call(_m, "GuestPing", _param0, _param1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+func (_mr *_MockLauncherClientRecorder) GuestPing(arg0, arg1 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "GuestPing", arg0, arg1)
+}
+
 func (_m *MockLauncherClient) Close() {
 	_m.ctrl.Call(_m, "Close")
 }
 
 func (_mr *_MockLauncherClientRecorder) Close() *gomock.Call {
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "Close")
+}
+
+func (_m *MockLauncherClient) VirtualMachineMemoryDump(vmi *v1.VirtualMachineInstance, dumpPath string) error {
+	ret := _m.ctrl.Call(_m, "VirtualMachineMemoryDump", vmi, dumpPath)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+func (_mr *_MockLauncherClientRecorder) VirtualMachineMemoryDump(arg0, arg1 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "VirtualMachineMemoryDump", arg0, arg1)
+}
+
+func (_m *MockLauncherClient) GetQemuVersion() (string, error) {
+	ret := _m.ctrl.Call(_m, "GetQemuVersion")
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+func (_mr *_MockLauncherClientRecorder) GetQemuVersion() *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "GetQemuVersion")
+}
+
+func (_m *MockLauncherClient) SyncVirtualMachineCPUs(vmi *v1.VirtualMachineInstance, options *v10.VirtualMachineOptions) error {
+	ret := _m.ctrl.Call(_m, "SyncVirtualMachineCPUs", vmi, options)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+func (_mr *_MockLauncherClientRecorder) SyncVirtualMachineCPUs(arg0, arg1 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "SyncVirtualMachineCPUs", arg0, arg1)
 }

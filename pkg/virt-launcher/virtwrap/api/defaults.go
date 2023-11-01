@@ -1,7 +1,6 @@
 package api
 
 const (
-	resolvConf        = "/etc/resolv.conf"
 	DefaultProtocol   = "TCP"
 	DefaultVMCIDR     = "10.0.2.0/24"
 	DefaultVMIpv6CIDR = "fd10:0:2::/120"
@@ -16,19 +15,32 @@ type Defaulter struct {
 	Architecture string
 }
 
-func (d *Defaulter) SetDefaults_Devices(devices *Devices) {
-	// Set default memballoon, "none" means that controller disabled
-	devices.Ballooning = &Ballooning{
-		Model: "none",
+func (d *Defaulter) IsPPC64() bool {
+	if d.Architecture == "ppc64le" {
+		return true
 	}
+	return false
+}
+
+func (d *Defaulter) IsARM64() bool {
+	if d.Architecture == "arm64" {
+		return true
+	}
+	return false
+}
+
+func (d *Defaulter) SetDefaults_Devices(devices *Devices) {
+
 }
 
 func (d *Defaulter) SetDefaults_OSType(ostype *OSType) {
 	ostype.OS = "hvm"
 
 	if ostype.Arch == "" {
-		if d.Architecture == "ppc64le" {
+		if d.IsPPC64() {
 			ostype.Arch = "ppc64le"
+		} else if d.IsARM64() {
+			ostype.Arch = "aarch64"
 		} else {
 			ostype.Arch = "x86_64"
 		}
@@ -37,8 +49,10 @@ func (d *Defaulter) SetDefaults_OSType(ostype *OSType) {
 	// q35 is an alias of the newest q35 machine type.
 	// TODO: we probably want to select concrete type in the future for "future-backwards" compatibility.
 	if ostype.Machine == "" {
-		if d.Architecture == "ppc64le" {
+		if d.IsPPC64() {
 			ostype.Machine = "pseries"
+		} else if d.IsARM64() {
+			ostype.Machine = "virt"
 		} else {
 			ostype.Machine = "q35"
 		}

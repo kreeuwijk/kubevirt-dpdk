@@ -4,10 +4,9 @@ import (
 	"encoding/json"
 
 	"fmt"
-	"io/ioutil"
 	"os"
 
-	"kubevirt.io/kubevirt/pkg/virt-operator/creation/components"
+	"kubevirt.io/kubevirt/pkg/virt-operator/resource/generate/components"
 )
 
 func verifyArgs(args []string) error {
@@ -26,13 +25,13 @@ func main() {
 
 	targetFile := os.Args[1]
 
-	promRuleSpec := components.NewPrometheusRuleSpec("ci")
+	promRuleSpec := components.NewPrometheusRuleSpec("ci", true)
 	b, err := json.Marshal(promRuleSpec)
 	if err != nil {
 		panic(err)
 	}
 
-	err = ioutil.WriteFile(targetFile, b, 0644)
+	err = os.WriteFile(targetFile, b, 0644)
 	if err != nil {
 		panic(err)
 	}

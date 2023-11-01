@@ -21,67 +21,272 @@ package admitters
 
 import (
 	"fmt"
-	"reflect"
 
-	"kubevirt.io/client-go/log"
-	"kubevirt.io/kubevirt/pkg/virt-operator/creation/rbac"
-
-	"k8s.io/api/admission/v1beta1"
+	admissionv1 "k8s.io/api/admission/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sfield "k8s.io/apimachinery/pkg/util/validation/field"
 
-	v1 "kubevirt.io/client-go/api/v1"
-	clientutil "kubevirt.io/client-go/util"
+	"kubevirt.io/kubevirt/pkg/virt-api/webhooks"
+	virtconfig "kubevirt.io/kubevirt/pkg/virt-config"
+
+	v1 "kubevirt.io/api/core/v1"
+
 	webhookutils "kubevirt.io/kubevirt/pkg/util/webhooks"
 )
 
 type VMIUpdateAdmitter struct {
+	ClusterConfig *virtconfig.ClusterConfig
 }
 
-func (admitter *VMIUpdateAdmitter) Admit(ar *v1beta1.AdmissionReview) *v1beta1.AdmissionResponse {
+func (admitter *VMIUpdateAdmitter) Admit(ar *admissionv1.AdmissionReview) *admissionv1.AdmissionResponse {
 
 	if resp := webhookutils.ValidateSchema(v1.VirtualMachineInstanceGroupVersionKind, ar.Request.Object.Raw); resp != nil {
 		return resp
 	}
 	// Get new VMI from admission response
-	newVMI, oldVMI, err := getAdmissionReviewVMI(ar)
+	newVMI, oldVMI, err := webhookutils.GetVMIFromAdmissionReview(ar)
 	if err != nil {
 		return webhookutils.ToAdmissionResponseError(err)
 	}
 
 	// Reject VMI update if VMI spec changed
-	if !reflect.DeepEqual(newVMI.Spec, oldVMI.Spec) {
-		return webhookutils.ToAdmissionResponse([]metav1.StatusCause{
-			{
-				Type:    metav1.CauseTypeFieldValueNotSupported,
-				Message: "update of VMI object is restricted",
-			},
-		})
+	if !equality.Semantic.DeepEqual(newVMI.Spec, oldVMI.Spec) {
+		// Only allow the KubeVirt SA to modify the VMI spec, since that means it went through the sub resource.
+		if webhooks.IsKubeVirtServiceAccount(ar.Request.UserInfo.Username) {
+			hotplugResponse := admitHotplug(oldVMI, newVMI, admitter.ClusterConfig)
+			if hotplugResponse != nil {
+				return hotplugResponse
+			}
+		} else {
+			return webhookutils.ToAdmissionResponse([]metav1.StatusCause{
+				{
+					Type:    metav1.CauseTypeFieldValueNotSupported,
+					Message: "update of VMI object is restricted",
+				},
+			})
+		}
 	}
 
 	if reviewResponse := admitVMILabelsUpdate(newVMI, oldVMI, ar); reviewResponse != nil {
 		return reviewResponse
 	}
 
-	reviewResponse := v1beta1.AdmissionResponse{}
+	reviewResponse := admissionv1.AdmissionResponse{}
 	reviewResponse.Allowed = true
 	return &reviewResponse
+}
+
+func getExpectedDisks(newVolumes []v1.Volume) int {
+	numMemoryDumpVolumes := 0
+	for _, volume := range newVolumes {
+		if volume.MemoryDump != nil {
+			numMemoryDumpVolumes = numMemoryDumpVolumes + 1
+		}
+	}
+	return len(newVolumes) - numMemoryDumpVolumes
+}
+
+// admitHotplugStorage compares the old and new volumes and disks, and ensures that they match and are valid.
+func admitHotplugStorage(newVolumes, oldVolumes []v1.Volume, newDisks, oldDisks []v1.Disk, volumeStatuses []v1.VolumeStatus, newVMI *v1.VirtualMachineInstance, config *virtconfig.ClusterConfig) *admissionv1.AdmissionResponse {
+	expectedDisks := getExpectedDisks(newVolumes)
+	if expectedDisks != len(newDisks) {
+		return webhookutils.ToAdmissionResponse([]metav1.StatusCause{
+			{
+				Type:    metav1.CauseTypeFieldValueInvalid,
+				Message: fmt.Sprintf("number of disks (%d) does not equal the number of volumes (%d)", len(newDisks), expectedDisks),
+			},
+		})
+	}
+	newHotplugVolumeMap := getHotplugVolumes(newVolumes, volumeStatuses)
+	newPermanentVolumeMap := getPermanentVolumes(newVolumes, volumeStatuses)
+	oldHotplugVolumeMap := getHotplugVolumes(oldVolumes, volumeStatuses)
+	oldPermanentVolumeMap := getPermanentVolumes(oldVolumes, volumeStatuses)
+
+	newDiskMap := getDiskMap(newDisks)
+	oldDiskMap := getDiskMap(oldDisks)
+
+	permanentAr := verifyPermanentVolumes(newPermanentVolumeMap, oldPermanentVolumeMap, newDiskMap, oldDiskMap)
+	if permanentAr != nil {
+		return permanentAr
+	}
+
+	hotplugAr := verifyHotplugVolumes(newHotplugVolumeMap, oldHotplugVolumeMap, newDiskMap, oldDiskMap)
+	if hotplugAr != nil {
+		return hotplugAr
+	}
+
+	causes := ValidateVirtualMachineInstanceSpec(k8sfield.NewPath("spec"), &newVMI.Spec, config)
+	if len(causes) > 0 {
+		return webhookutils.ToAdmissionResponse(causes)
+	}
+
+	return nil
+}
+
+func verifyHotplugVolumes(newHotplugVolumeMap, oldHotplugVolumeMap map[string]v1.Volume, newDisks, oldDisks map[string]v1.Disk) *admissionv1.AdmissionResponse {
+	for k, v := range newHotplugVolumeMap {
+		if _, ok := oldHotplugVolumeMap[k]; ok {
+			// New and old have same volume, ensure they are the same
+			if !equality.Semantic.DeepEqual(v, oldHotplugVolumeMap[k]) {
+				return webhookutils.ToAdmissionResponse([]metav1.StatusCause{
+					{
+						Type:    metav1.CauseTypeFieldValueInvalid,
+						Message: fmt.Sprintf("hotplug volume %s, changed", k),
+					},
+				})
+			}
+			if v.MemoryDump == nil {
+				if _, ok := newDisks[k]; !ok {
+					return webhookutils.ToAdmissionResponse([]metav1.StatusCause{
+						{
+							Type:    metav1.CauseTypeFieldValueInvalid,
+							Message: fmt.Sprintf("Volume %s doesn't have a matching disk", k),
+						},
+					})
+				}
+				if !equality.Semantic.DeepEqual(newDisks[k], oldDisks[k]) {
+					return webhookutils.ToAdmissionResponse([]metav1.StatusCause{
+						{
+							Type:    metav1.CauseTypeFieldValueInvalid,
+							Message: fmt.Sprintf("hotplug disk %s, changed", k),
+						},
+					})
+				}
+			}
+		} else {
+			// This is a new volume, ensure that the volume is either DV, PVC or memoryDumpVolume
+			if v.DataVolume == nil && v.PersistentVolumeClaim == nil && v.MemoryDump == nil {
+				return webhookutils.ToAdmissionResponse([]metav1.StatusCause{
+					{
+						Type:    metav1.CauseTypeFieldValueInvalid,
+						Message: fmt.Sprintf("volume %s is not a PVC or DataVolume", k),
+					},
+				})
+			}
+			if v.MemoryDump == nil {
+				// Also ensure the matching new disk exists and is of type scsi
+				if _, ok := newDisks[k]; !ok {
+					return webhookutils.ToAdmissionResponse([]metav1.StatusCause{
+						{
+							Type:    metav1.CauseTypeFieldValueInvalid,
+							Message: fmt.Sprintf("Disk %s does not exist", k),
+						},
+					})
+				}
+				disk := newDisks[k]
+				if disk.Disk == nil || disk.Disk.Bus != "scsi" {
+					return webhookutils.ToAdmissionResponse([]metav1.StatusCause{
+						{
+							Type:    metav1.CauseTypeFieldValueInvalid,
+							Message: fmt.Sprintf("hotplugged Disk %s does not use a scsi bus", k),
+						},
+					})
+
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func verifyPermanentVolumes(newPermanentVolumeMap, oldPermanentVolumeMap map[string]v1.Volume, newDisks, oldDisks map[string]v1.Disk) *admissionv1.AdmissionResponse {
+	if len(newPermanentVolumeMap) != len(oldPermanentVolumeMap) {
+		// Removed one of the permanent volumes, reject admission.
+		return webhookutils.ToAdmissionResponse([]metav1.StatusCause{
+			{
+				Type:    metav1.CauseTypeFieldValueInvalid,
+				Message: "Number of permanent volumes has changed",
+			},
+		})
+	}
+
+	// Ensure we didn't modify any permanent volumes
+	for k, v := range newPermanentVolumeMap {
+		// Know at this point the new old and permanent have the same count.
+		if _, ok := oldPermanentVolumeMap[k]; !ok {
+			return webhookutils.ToAdmissionResponse([]metav1.StatusCause{
+				{
+					Type:    metav1.CauseTypeFieldValueInvalid,
+					Message: fmt.Sprintf("permanent volume %s, not found", k),
+				},
+			})
+		}
+		if !equality.Semantic.DeepEqual(v, oldPermanentVolumeMap[k]) {
+			return webhookutils.ToAdmissionResponse([]metav1.StatusCause{
+				{
+					Type:    metav1.CauseTypeFieldValueInvalid,
+					Message: fmt.Sprintf("permanent volume %s, changed", k),
+				},
+			})
+		}
+		if !equality.Semantic.DeepEqual(newDisks[k], oldDisks[k]) {
+			return webhookutils.ToAdmissionResponse([]metav1.StatusCause{
+				{
+					Type:    metav1.CauseTypeFieldValueInvalid,
+					Message: fmt.Sprintf("permanent disk %s, changed", k),
+				},
+			})
+		}
+	}
+	return nil
+}
+
+func getDiskMap(disks []v1.Disk) map[string]v1.Disk {
+	newDiskMap := make(map[string]v1.Disk, 0)
+	for _, disk := range disks {
+		if disk.Name != "" {
+			newDiskMap[disk.Name] = disk
+		}
+	}
+	return newDiskMap
+}
+
+func getHotplugVolumes(volumes []v1.Volume, volumeStatuses []v1.VolumeStatus) map[string]v1.Volume {
+	permanentVolumesFromStatus := make(map[string]v1.Volume, 0)
+	for _, volume := range volumeStatuses {
+		if volume.HotplugVolume == nil {
+			permanentVolumesFromStatus[volume.Name] = v1.Volume{}
+		}
+	}
+	permanentVolumes := make(map[string]v1.Volume, 0)
+	for _, volume := range volumes {
+		if _, ok := permanentVolumesFromStatus[volume.Name]; !ok {
+			permanentVolumes[volume.Name] = volume
+		}
+	}
+	return permanentVolumes
+}
+
+func getPermanentVolumes(volumes []v1.Volume, volumeStatuses []v1.VolumeStatus) map[string]v1.Volume {
+	permanentVolumesFromStatus := make(map[string]v1.Volume, 0)
+	for _, volume := range volumeStatuses {
+		if volume.HotplugVolume == nil {
+			permanentVolumesFromStatus[volume.Name] = v1.Volume{}
+		}
+	}
+	permanentVolumes := make(map[string]v1.Volume, 0)
+	for _, volume := range volumes {
+		if _, ok := permanentVolumesFromStatus[volume.Name]; ok {
+			permanentVolumes[volume.Name] = volume
+		}
+	}
+	return permanentVolumes
 }
 
 func admitVMILabelsUpdate(
 	newVMI *v1.VirtualMachineInstance,
 	oldVMI *v1.VirtualMachineInstance,
-	ar *v1beta1.AdmissionReview) *v1beta1.AdmissionResponse {
+	ar *admissionv1.AdmissionReview) *admissionv1.AdmissionResponse {
 
-	// Skip admission for internal components
-	allowed := getAllowedServiceAccounts()
-	if _, ok := allowed[ar.Request.UserInfo.Username]; ok {
+	if webhooks.IsKubeVirtServiceAccount(ar.Request.UserInfo.Username) {
 		return nil
 	}
 
 	oldLabels := filterKubevirtLabels(oldVMI.ObjectMeta.Labels)
 	newLabels := filterKubevirtLabels(newVMI.ObjectMeta.Labels)
 
-	if !reflect.DeepEqual(oldLabels, newLabels) {
+	if !equality.Semantic.DeepEqual(oldLabels, newLabels) {
 		return webhookutils.ToAdmissionResponse([]metav1.StatusCause{
 			{
 				Type:    metav1.CauseTypeFieldValueNotSupported,
@@ -93,24 +298,6 @@ func admitVMILabelsUpdate(
 	return nil
 }
 
-func getAllowedServiceAccounts() map[string]struct{} {
-	ns, err := clientutil.GetNamespace()
-	logger := log.DefaultLogger()
-
-	if err != nil {
-		logger.Info("Failed to get namespace. Fallback to default: 'kubevirt'")
-		ns = "kubevirt"
-	}
-
-	// system:serviceaccount:{namespace}:{kubevirt-component}
-	prefix := fmt.Sprintf("%s:%s:%s", "system", "serviceaccount", ns)
-	return map[string]struct{}{
-		fmt.Sprintf("%s:%s", prefix, rbac.ApiServiceAccountName):        {},
-		fmt.Sprintf("%s:%s", prefix, rbac.HandlerServiceAccountName):    {},
-		fmt.Sprintf("%s:%s", prefix, rbac.ControllerServiceAccountName): {},
-	}
-}
-
 func filterKubevirtLabels(labels map[string]string) map[string]string {
 	m := make(map[string]string)
 	if len(labels) == 0 {
@@ -118,10 +305,44 @@ func filterKubevirtLabels(labels map[string]string) map[string]string {
 		return m
 	}
 	for label, value := range labels {
-		if _, ok := restriectedVmiLabels[label]; ok {
+		if _, ok := restrictedVmiLabels[label]; ok {
 			m[label] = value
 		}
 	}
 
 	return m
+}
+
+func admitHotplug(
+	oldVMI, newVMI *v1.VirtualMachineInstance,
+	clusterConfig *virtconfig.ClusterConfig,
+) *admissionv1.AdmissionResponse {
+
+	if response := admitHotplugCPU(oldVMI.Spec.Domain.CPU, newVMI.Spec.Domain.CPU); response != nil {
+		return response
+	}
+
+	return admitHotplugStorage(
+		newVMI.Spec.Volumes,
+		oldVMI.Spec.Volumes,
+		newVMI.Spec.Domain.Devices.Disks,
+		oldVMI.Spec.Domain.Devices.Disks,
+		oldVMI.Status.VolumeStatus,
+		newVMI,
+		clusterConfig)
+
+}
+
+func admitHotplugCPU(oldCPUTopology, newCPUTopology *v1.CPU) *admissionv1.AdmissionResponse {
+
+	if oldCPUTopology.MaxSockets != newCPUTopology.MaxSockets {
+		return webhookutils.ToAdmissionResponse([]metav1.StatusCause{
+			{
+				Type:    metav1.CauseTypeFieldValueInvalid,
+				Message: fmt.Sprintf("CPU topology maxSockets changed"),
+			},
+		})
+	}
+
+	return nil
 }

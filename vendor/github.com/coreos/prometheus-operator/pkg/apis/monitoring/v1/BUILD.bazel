@@ -7,6 +7,7 @@ go_library(
         "crd_kinds.go",
         "doc.go",
         "register.go",
+        "thanos_types.go",
         "types.go",
         "zz_generated.deepcopy.go",
     ],

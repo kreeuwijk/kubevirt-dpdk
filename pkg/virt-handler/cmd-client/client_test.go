@@ -20,20 +20,25 @@
 package cmdclient
 
 import (
-	"io/ioutil"
+	"errors"
 	"os"
 	"path/filepath"
 
-	. "github.com/onsi/ginkgo"
+	gomock "github.com/golang/mock/gomock"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"golang.org/x/net/context"
+	"google.golang.org/grpc"
 	"k8s.io/apimachinery/pkg/types"
 
-	v1 "kubevirt.io/client-go/api/v1"
-	"kubevirt.io/client-go/log"
+	"kubevirt.io/client-go/api"
+
+	v1 "kubevirt.io/api/core/v1"
+
+	cmdv1 "kubevirt.io/kubevirt/pkg/handler-launcher-com/cmd/v1"
 )
 
 var _ = Describe("Virt remote commands", func() {
-	log.Log.SetIOWriter(GinkgoWriter)
 
 	var err error
 	var shareDir string
@@ -46,7 +51,7 @@ var _ = Describe("Virt remote commands", func() {
 	podUID := "poduid123"
 
 	BeforeEach(func() {
-		vmi = v1.NewMinimalVMI("testvmi")
+		vmi = api.NewMinimalVMI("testvmi")
 		vmi.UID = types.UID("1234")
 		vmi.Status = v1.VirtualMachineInstanceStatus{
 			ActivePods: map[types.UID]string{
@@ -54,10 +59,10 @@ var _ = Describe("Virt remote commands", func() {
 			},
 		}
 
-		shareDir, err = ioutil.TempDir("", "kubevirt-share")
+		shareDir, err = os.MkdirTemp("", "kubevirt-share")
 		Expect(err).ToNot(HaveOccurred())
 
-		podsDir, err = ioutil.TempDir("", "pods")
+		podsDir, err = os.MkdirTemp("", "pods")
 		Expect(err).ToNot(HaveOccurred())
 
 		socketsDir = filepath.Join(shareDir, "sockets")
@@ -90,7 +95,7 @@ var _ = Describe("Virt remote commands", func() {
 			Expect(sock).To(Equal(filepath.Join(shareDir, "sockets", StandardLauncherSocketFileName)))
 
 			// falls back to returning a legacy socket name if it exists
-			// This is for backwards compatiblity
+			// This is for backwards compatibility
 			f, err := os.Create(filepath.Join(socketsDir, "1234_sock"))
 			Expect(err).ToNot(HaveOccurred())
 			f.Close()
@@ -109,7 +114,8 @@ var _ = Describe("Virt remote commands", func() {
 
 			// listing all sockets should detect both the new and legacy sockets
 			sockets, err := ListAllSockets()
-			Expect(len(sockets)).To(Equal(2))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(sockets).To(HaveLen(2))
 		})
 
 		It("Detect unresponsive socket", func() {
@@ -140,15 +146,102 @@ var _ = Describe("Virt remote commands", func() {
 			legacy := IsLegacySocket("/some/path/something_sock")
 			Expect(legacy).To(BeTrue())
 
-			legacy = IsLegacySocket("/some/path/" + StandardLauncherSocketFileName)
+			legacy = IsLegacySocket(filepath.Join("/some/path", StandardLauncherSocketFileName))
 			Expect(legacy).To(BeFalse())
 
 			monEnabled := SocketMonitoringEnabled("/some/path/something_sock")
 			Expect(monEnabled).To(BeFalse())
 
-			monEnabled = SocketMonitoringEnabled("/some/path/" + StandardLauncherSocketFileName)
+			monEnabled = SocketMonitoringEnabled(filepath.Join("/some/path", StandardLauncherSocketFileName))
 			Expect(monEnabled).To(BeTrue())
+		})
 
+		Context("exec", func() {
+			var (
+				ctrl          *gomock.Controller
+				mockCmdClient *cmdv1.MockCmdClient
+				client        LauncherClient
+			)
+
+			BeforeEach(func() {
+				ctrl = gomock.NewController(GinkgoT())
+				mockCmdClient = cmdv1.NewMockCmdClient(ctrl)
+				client = newV1Client(mockCmdClient, nil)
+			})
+
+			var (
+				testDomainName           = "test"
+				testCommand              = "testCmd"
+				testArgs                 = []string{"-v", "2"}
+				testClientErr            = errors.New("client error")
+				testStdOut               = "stdOut"
+				testTimeoutSeconds int32 = 10
+
+				expectExec = func() *gomock.Call {
+					return mockCmdClient.EXPECT().Exec(gomock.Any(), &cmdv1.ExecRequest{
+						DomainName:     testDomainName,
+						Command:        testCommand,
+						Args:           testArgs,
+						TimeoutSeconds: testTimeoutSeconds,
+					})
+				}
+				expectGuestPing = func() *gomock.Call {
+					return mockCmdClient.EXPECT().GuestPing(gomock.Any(), &cmdv1.GuestPingRequest{
+						DomainName:     testDomainName,
+						TimeoutSeconds: testTimeoutSeconds,
+					})
+				}
+				expectQemuVersion = func() *gomock.Call {
+					return mockCmdClient.EXPECT().GetQemuVersion(gomock.Any(), &cmdv1.EmptyRequest{})
+				}
+			)
+			It("calls cmdclient.GetQemuVersion", func() {
+				fakeQemuVersion := "7.2.0"
+				expectQemuVersion().Return(&cmdv1.QemuVersionResponse{Version: fakeQemuVersion}, nil)
+				qemuVersion, err := client.GetQemuVersion()
+				Expect(err).ToNot(HaveOccurred())
+				Expect(qemuVersion).To(Equal(fakeQemuVersion))
+			})
+			It("calls cmdclient.Exec", func() {
+				expectExec().Times(1)
+				client.Exec(testDomainName, testCommand, testArgs, testTimeoutSeconds)
+			})
+			It("returns client errors", func() {
+				expectExec().Times(1).Return(&cmdv1.ExecResponse{}, testClientErr)
+				_, _, err := client.Exec(testDomainName, testCommand, testArgs, testTimeoutSeconds)
+				Expect(err).To(HaveOccurred())
+			})
+			It("returns exitCode and stdOut if possible", func() {
+				expectExec().Times(1).Return(&cmdv1.ExecResponse{
+					ExitCode: 1,
+					StdOut:   testStdOut,
+				}, nil)
+				exitCode, stdOut, _ := client.Exec(testDomainName, testCommand, testArgs, testTimeoutSeconds)
+				Expect(exitCode).To(Equal(1))
+				Expect(stdOut).To(Equal(testStdOut))
+			})
+			It("provide ctx with a shortTimeout", func() {
+				expectExec().Times(1).Do(func(ctx context.Context, _ *cmdv1.ExecRequest, _ ...grpc.CallOption) (*cmdv1.ExecResponse, error) {
+					_, ok := ctx.Deadline()
+					Expect(ok).To(BeTrue())
+					return nil, nil
+				})
+				client.Exec(testDomainName, testCommand, testArgs, testTimeoutSeconds)
+			})
+			It("calls cmdclient.GuestPing", func() {
+				expectGuestPing().Times(1)
+				client.GuestPing(testDomainName, testTimeoutSeconds)
+			})
+			It("returns client error", func() {
+				expectGuestPing().Times(1).Return(&cmdv1.GuestPingResponse{}, testClientErr)
+				err := client.GuestPing(testDomainName, testTimeoutSeconds)
+				Expect(err).To(HaveOccurred())
+			})
+			It("should succeed", func() {
+				expectGuestPing().Times(1).Return(&cmdv1.GuestPingResponse{Response: &cmdv1.Response{Success: true}}, nil)
+				err := client.GuestPing(testDomainName, testTimeoutSeconds)
+				Expect(err).ToNot(HaveOccurred())
+			})
 		})
 	})
 })

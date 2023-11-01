@@ -17,7 +17,7 @@
  *
  */
 
-package hooks_test
+package hooks
 
 import (
 	"context"
@@ -29,10 +29,9 @@ import (
 
 	"google.golang.org/grpc"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"kubevirt.io/kubevirt/pkg/hooks"
 	hooksInfo "kubevirt.io/kubevirt/pkg/hooks/info"
 	hooksV1alpha1 "kubevirt.io/kubevirt/pkg/hooks/v1alpha1"
 )
@@ -52,7 +51,7 @@ func (s dynamicInfoServer) Info(ctx context.Context, params *hooksInfo.InfoParam
 			hooksV1alpha1.Version,
 		},
 		HookPoints: []*hooksInfo.HookPoint{
-			&hooksInfo.HookPoint{
+			{
 				Name:     s.hookPointName,
 				Priority: s.hookPointPriority,
 			},
@@ -81,9 +80,12 @@ func hookListenAndServe(socketPath string, hookName string, hookPointName string
 
 var _ = Describe("HooksManager", func() {
 	Context("With existing sockets", func() {
-		socketDir := hooks.HookSocketsSharedDirectory
+		var socketDir string
 
 		BeforeEach(func() {
+			var err error
+			socketDir, err = os.MkdirTemp("", "hooksocketdir")
+			Expect(err).ToNot(HaveOccurred())
 			os.MkdirAll(socketDir, os.ModePerm)
 		})
 
@@ -96,7 +98,7 @@ var _ = Describe("HooksManager", func() {
 			defer socket.Close()
 			defer os.Remove(socketPath)
 
-			manager := hooks.GetManager()
+			manager := newManager(socketDir)
 			err = manager.Collect(1, 10*time.Second)
 			Expect(err).ToNot(HaveOccurred())
 
@@ -117,7 +119,7 @@ var _ = Describe("HooksManager", func() {
 				defer os.Remove(socketPath)
 			}
 
-			manager := hooks.GetManager()
+			manager := newManager(socketDir)
 			err := manager.Collect(uint(len(hookNames)), 10*time.Second)
 			Expect(err).ToNot(HaveOccurred())
 
@@ -139,7 +141,7 @@ var _ = Describe("HooksManager", func() {
 				defer os.Remove(socketPath)
 			}
 
-			manager := hooks.GetManager()
+			manager := newManager(socketDir)
 			err := manager.Collect(uint(len(hookNameMap)), 10*time.Second)
 			Expect(err).ToNot(HaveOccurred())
 

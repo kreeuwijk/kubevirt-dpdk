@@ -1,5 +1,5 @@
 ---
-apiVersion: kubevirt.io/v1alpha3
+apiVersion: kubevirt.io/v1
 kind: VirtualMachineInstance
 metadata:
   labels:
@@ -12,11 +12,9 @@ spec:
       - disk:
           bus: virtio
         name: pvcdisk
-    machine:
-      type: ""
     resources:
       requests:
-        memory: 64M
+        memory: 128Mi
   terminationGracePeriodSeconds: 0
   volumes:
   - name: pvcdisk

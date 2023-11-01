@@ -20,12 +20,8 @@
 set -e
 
 source hack/common.sh
+source hack/bootstrap.sh
 source hack/config.sh
-
-skipj2=false
-if [ "$1" == "--skipj2" ]; then
-    skipj2=true
-fi
 
 manifest_docker_prefix=${manifest_docker_prefix-${docker_prefix}}
 kubevirt_logo_path="assets/kubevirt_logo.png"
@@ -33,15 +29,24 @@ kubevirt_logo_path="assets/kubevirt_logo.png"
 rm -rf ${MANIFESTS_OUT_DIR}
 rm -rf ${MANIFEST_TEMPLATES_OUT_DIR}
 
-(cd ${KUBEVIRT_DIR}/tools/manifest-templator/ && go_build)
+rm -rf "${TESTS_OUT_DIR}/tools"
+mkdir -p "${TESTS_OUT_DIR}/tools"
+templator=${TESTS_OUT_DIR}/tools/manifest-templator
+
+if [ "${KUBEVIRT_NO_BAZEL}" != "true" ]; then
+    bazel run \
+        --config=${HOST_ARCHITECTURE} \
+        //:build-manifest-templator -- ${templator}
+else
+    (cd ${KUBEVIRT_DIR}/tools/manifest-templator/ && go_build && cp manifest-templator ${templator})
+fi
 
 # first process file includes only
 args=$(cd ${KUBEVIRT_DIR}/manifests && find . -type f -name "*.yaml.in" -not -path "./generated/*")
 for arg in $args; do
     infile=${KUBEVIRT_DIR}/manifests/${arg}
     outfile=${KUBEVIRT_DIR}/manifests/${arg}.tmp
-
-    ${KUBEVIRT_DIR}/tools/manifest-templator/manifest-templator \
+    ${templator} \
         --process-files \
         --generated-manifests-dir=${KUBEVIRT_DIR}/manifests/generated/ \
         --input-file=${infile} >${outfile}
@@ -68,9 +73,8 @@ for arg in $args; do
     manifest="${manifest/VERSION/${csv_version}}"
 
     outfile=${final_out_dir}/${manifest}
-    template_outfile=${final_templates_out_dir}/${manifest}.j2
 
-    ${KUBEVIRT_DIR}/tools/manifest-templator/manifest-templator \
+    ${templator} \
         --process-vars \
         --namespace=${namespace} \
         --cdi-namespace=${cdi_namespace} \
@@ -91,27 +95,14 @@ for arg in $args; do
         --virt-controller-sha=${VIRT_CONTROLLER_SHA} \
         --virt-handler-sha=${VIRT_HANDLER_SHA} \
         --virt-launcher-sha=${VIRT_LAUNCHER_SHA} \
+        --virt-exportproxy-sha=${VIRT_EXPORTPROXY_SHA} \
+        --virt-exportserver-sha=${VIRT_EXPORTSERVER_SHA} \
+        --gs-sha=${GS_SHA} \
+        --pr-helper-sha=${PR_HELPER_SHA} \
+        --runbook-url-template=${runbook_url_template} \
+        --feature-gates=${feature_gates} \
+        --infra-replicas=${infra_replicas} \
         >${outfile}
-
-    if [ "$skipj2" = true ]; then
-        echo "skipping j2 template for $infile"
-        continue
-    fi
-
-    ${KUBEVIRT_DIR}/tools/manifest-templator/manifest-templator \
-        --process-vars \
-        --namespace="{{ namespace }}" \
-        --cdi-namespace="{{ cdi_namespace }}" \
-        --container-prefix="{{ docker_prefix }}" \
-        --container-tag="{{ docker_tag }}" \
-        --image-pull-policy="{{ image_pull_policy }}" \
-        --verbosity=${verbosity} \
-        --csv-version=${csv_version} \
-        --kubevirt-logo-path=${kubevirt_logo_path} \
-        --package-name=${package_name} \
-        --input-file=${infile} \
-        --quay-repository=${QUAY_REPOSITORY} \
-        >${template_outfile}
 done
 
 # Remove tmp files
@@ -120,34 +111,3 @@ done
 # Remove empty lines at the end of files which are added by go templating
 find ${MANIFESTS_OUT_DIR}/ -type f -exec sed -i {} -e '${/^$/d;}' \;
 find ${MANIFEST_TEMPLATES_OUT_DIR}/ -type f -exec sed -i {} -e '${/^$/d;}' \;
-
-# we can't test this when we have image shasums, because shassums are not used in templates, so they will always differ
-if [ "$skipj2" = true ] || [ ! -z $VIRT_OPERATOR_SHA ]; then
-    exit 0
-fi
-
-# make sure that template manifests align with release manifests
-export namespace=${namespace}
-export cdi_namespace=${cdi_namespace}
-export docker_tag=${docker_tag}
-export docker_prefix=${manifest_docker_prefix}
-export image_pull_policy=${image_pull_policy}
-
-TMP_DIR=$(mktemp -d)
-cleanup() {
-    ret=$?
-    rm -rf "${TMP_DIR}"
-    exit ${ret}
-}
-trap "cleanup" INT TERM EXIT
-
-for file in $(find ${MANIFEST_TEMPLATES_OUT_DIR}/ -type f); do
-    mkdir -p ${TMP_DIR}/$(dirname ${file})
-    j2 ${file} | sed -e '/.$/a\' >${TMP_DIR}/${file%.j2}
-done
-
-# If diff fails then we have an issue
-diff -ru -x "bundle" ${MANIFESTS_OUT_DIR} ${TMP_DIR}/${MANIFEST_TEMPLATES_OUT_DIR} || (
-    echo "Error: Generated manifests don't match"
-    false
-)

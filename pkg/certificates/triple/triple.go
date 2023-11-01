@@ -16,7 +16,7 @@ limitations under the License.
 package triple
 
 import (
-	"crypto/rsa"
+	"crypto/ecdsa"
 	"crypto/x509"
 	"fmt"
 	"net"
@@ -26,18 +26,19 @@ import (
 )
 
 type KeyPair struct {
-	Key  *rsa.PrivateKey
+	Key  *ecdsa.PrivateKey
 	Cert *x509.Certificate
 }
 
 func NewCA(name string, duration time.Duration) (*KeyPair, error) {
-	key, err := certutil.NewPrivateKey()
+	key, err := certutil.NewECDSAPrivateKey()
 	if err != nil {
 		return nil, fmt.Errorf("unable to create a private key for a new CA: %v", err)
 	}
 
+	signerName := fmt.Sprintf("%s@%d", name, time.Now().Unix())
 	config := certutil.Config{
-		CommonName: name,
+		CommonName: signerName,
 	}
 
 	cert, err := certutil.NewSelfSignedCACert(config, key, duration)
@@ -51,7 +52,7 @@ func NewCA(name string, duration time.Duration) (*KeyPair, error) {
 }
 
 func NewServerKeyPair(ca *KeyPair, commonName, svcName, svcNamespace, dnsDomain string, ips, hostnames []string, duration time.Duration) (*KeyPair, error) {
-	key, err := certutil.NewPrivateKey()
+	key, err := certutil.NewECDSAPrivateKey()
 	if err != nil {
 		return nil, fmt.Errorf("unable to create a server private key: %v", err)
 	}
@@ -91,7 +92,7 @@ func NewServerKeyPair(ca *KeyPair, commonName, svcName, svcNamespace, dnsDomain 
 }
 
 func NewClientKeyPair(ca *KeyPair, commonName string, organizations []string, duration time.Duration) (*KeyPair, error) {
-	key, err := certutil.NewPrivateKey()
+	key, err := certutil.NewECDSAPrivateKey()
 	if err != nil {
 		return nil, fmt.Errorf("unable to create a client private key: %v", err)
 	}

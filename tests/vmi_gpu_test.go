@@ -1,23 +1,36 @@
 package tests_test
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"strings"
 
+	"kubevirt.io/kubevirt/tests/decorators"
+
 	expect "github.com/google/goexpect"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	k8sv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1 "kubevirt.io/client-go/api/v1"
+	"kubevirt.io/kubevirt/tests/exec"
+	"kubevirt.io/kubevirt/tests/framework/kubevirt"
+	"kubevirt.io/kubevirt/tests/framework/matcher"
+	"kubevirt.io/kubevirt/tests/util"
+
+	v1 "kubevirt.io/api/core/v1"
 	"kubevirt.io/client-go/kubecli"
 	"kubevirt.io/client-go/log"
-	"kubevirt.io/kubevirt/pkg/util"
+
+	hwutil "kubevirt.io/kubevirt/pkg/util/hardware"
 	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/api"
 
 	"kubevirt.io/kubevirt/tests"
+	"kubevirt.io/kubevirt/tests/console"
+	cd "kubevirt.io/kubevirt/tests/containerdisk"
+	"kubevirt.io/kubevirt/tests/libvmi"
+	"kubevirt.io/kubevirt/tests/libwait"
 )
 
 func parseDeviceAddress(addrString string) []string {
@@ -35,48 +48,54 @@ func parseDeviceAddress(addrString string) []string {
 	return addrs
 }
 
-func checkGPUDevice(vmi *v1.VirtualMachineInstance, gpuName string, prompt string) {
+func checkGPUDevice(vmi *v1.VirtualMachineInstance, gpuName string) {
 	cmdCheck := fmt.Sprintf("lspci -m %s\n", gpuName)
-	err := tests.CheckForTextExpecter(vmi, []expect.Batcher{
+	err := console.SafeExpectBatch(vmi, []expect.Batcher{
 		&expect.BSnd{S: "\n"},
-		&expect.BExp{R: prompt},
+		&expect.BExp{R: console.PromptExpression},
 		&expect.BSnd{S: cmdCheck},
-		&expect.BExp{R: prompt},
+		&expect.BExp{R: console.PromptExpression},
 		&expect.BSnd{S: "echo $?\n"},
-		&expect.BExp{R: "0"},
+		&expect.BExp{R: console.RetValue("0")},
 	}, 15)
 	Expect(err).ToNot(HaveOccurred(), "GPU device %q was not found in the VMI %s within the given timeout", gpuName, vmi.Name)
 }
 
-var _ = Describe("GPU", func() {
-	tests.FlagParse()
+var _ = Describe("[Serial][sig-compute]GPU", Serial, decorators.GPU, decorators.SigCompute, func() {
+	var virtClient kubecli.KubevirtClient
 
-	virtClient, err := kubecli.GetKubevirtClient()
-	tests.PanicOnError(err)
+	BeforeEach(func() {
+		virtClient = kubevirt.Client()
+	})
 
 	Context("with ephemeral disk", func() {
-		It("Should create a valid VMI but pod should not go to running state", func() {
+		It("[test_id:4607]Should create a valid VMI but pod should not go to running state", func() {
 			gpuName := "random.com/gpu"
-			randomVMI := tests.NewRandomVMIWithEphemeralDisk(tests.ContainerDiskFor(tests.ContainerDiskCirros))
+			randomVMI := tests.NewRandomVMIWithEphemeralDisk(cd.ContainerDiskFor(cd.ContainerDiskCirros))
 			gpus := []v1.GPU{
-				v1.GPU{
+				{
 					Name:       "gpu1",
 					DeviceName: gpuName,
 				},
 			}
 			randomVMI.Spec.Domain.Devices.GPUs = gpus
-			vmi, apiErr := virtClient.VirtualMachineInstance(tests.NamespaceTestDefault).Create(randomVMI)
+			vmi, apiErr := virtClient.VirtualMachineInstance(util.NamespaceTestDefault).Create(context.Background(), randomVMI)
 			Expect(apiErr).ToNot(HaveOccurred())
 
-			pod := tests.GetPodByVirtualMachineInstance(vmi, tests.NamespaceTestDefault)
+			By("Waiting for VMI to be scheduled")
+			Eventually(matcher.ThisVMI(vmi)).Should(matcher.BeInPhase(v1.Scheduling))
+
+			pod, err := libvmi.GetPodByVirtualMachineInstance(vmi, vmi.Namespace)
+			Expect(err).ToNot(HaveOccurred())
 			Expect(pod.Status.Phase).To(Equal(k8sv1.PodPending))
 			Expect(pod.Status.Conditions[0].Type).To(Equal(k8sv1.PodScheduled))
-			Expect(strings.Contains(pod.Status.Conditions[0].Message, "Insufficient "+gpuName)).To(Equal(true))
+			Expect(strings.Contains(pod.Status.Conditions[0].Message, "Insufficient "+gpuName)).To(BeTrue())
 			Expect(pod.Status.Conditions[0].Reason).To(Equal("Unschedulable"))
 		})
 
-		It("Should create a valid VMI and appropriate libvirt domain", func() {
-			nodesList, err := virtClient.CoreV1().Nodes().List(metav1.ListOptions{})
+		It("[test_id:4608]Should create a valid VMI and appropriate libvirt domain", func() {
+			nodesList, err := virtClient.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+			Expect(err).ToNot(HaveOccurred())
 			var gpuName = ""
 			for _, item := range nodesList.Items {
 				resourceList := item.Status.Allocatable
@@ -90,25 +109,25 @@ var _ = Describe("GPU", func() {
 				}
 			}
 			Expect(gpuName).ToNot(Equal(""))
-			randomVMI := tests.NewRandomVMIWithEphemeralDisk(tests.ContainerDiskFor(tests.ContainerDiskCirros))
+			randomVMI := tests.NewRandomVMIWithEphemeralDisk(cd.ContainerDiskFor(cd.ContainerDiskCirros))
 			gpus := []v1.GPU{
-				v1.GPU{
+				{
 					Name:       "gpu1",
 					DeviceName: gpuName,
 				},
 			}
 			randomVMI.Spec.Domain.Devices.GPUs = gpus
-			vmi, apiErr := virtClient.VirtualMachineInstance(tests.NamespaceTestDefault).Create(randomVMI)
+			vmi, apiErr := virtClient.VirtualMachineInstance(util.NamespaceTestDefault).Create(context.Background(), randomVMI)
 			Expect(apiErr).ToNot(HaveOccurred())
-			tests.WaitForSuccessfulVMIStart(vmi)
+			libwait.WaitForSuccessfulVMIStart(vmi)
 			domain, err := tests.GetRunningVirtualMachineInstanceDomainXML(virtClient, vmi)
 			Expect(err).ToNot(HaveOccurred())
 			domSpec := &api.DomainSpec{}
 			Expect(xml.Unmarshal([]byte(domain), domSpec)).To(Succeed())
 
-			readyPod := tests.GetRunningPodByVirtualMachineInstance(vmi, tests.NamespaceTestDefault)
+			readyPod := tests.GetRunningPodByVirtualMachineInstance(vmi, util.NamespaceTestDefault)
 
-			gpuOutput, err := tests.ExecuteCommandOnPod(
+			gpuOutput, err := exec.ExecuteCommandOnPod(
 				virtClient,
 				readyPod,
 				"compute",
@@ -118,12 +137,12 @@ var _ = Describe("GPU", func() {
 			Expect(err).ToNot(HaveOccurred())
 			addrList := parseDeviceAddress(gpuOutput)
 
-			Expect(len(addrList)).To(Equal(len(domSpec.Devices.HostDevices)))
+			Expect(addrList).To(HaveLen(len(domSpec.Devices.HostDevices)))
 			for n, addr := range addrList {
-				Expect(domSpec.Devices.HostDevices[n].Type).To(Equal("pci"))
+				Expect(domSpec.Devices.HostDevices[n].Type).To(Equal(api.HostDevicePCI))
 				Expect(domSpec.Devices.HostDevices[n].Managed).To(Equal("yes"))
 				Expect(domSpec.Devices.HostDevices[n].Mode).To(Equal("subsystem"))
-				dbsfFields, err := util.ParsePciAddress(addr)
+				dbsfFields, err := hwutil.ParsePciAddress(addr)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(domSpec.Devices.HostDevices[n].Source.Address.Domain).To(Equal("0x" + dbsfFields[0]))
 				Expect(domSpec.Devices.HostDevices[n].Source.Address.Bus).To(Equal("0x" + dbsfFields[1]))
@@ -131,7 +150,7 @@ var _ = Describe("GPU", func() {
 				Expect(domSpec.Devices.HostDevices[n].Source.Address.Function).To(Equal("0x" + dbsfFields[3]))
 			}
 
-			checkGPUDevice(randomVMI, "10de", "$")
+			checkGPUDevice(randomVMI, "10de")
 		})
 	})
 })

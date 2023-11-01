@@ -24,7 +24,7 @@ import (
 	"encoding/base64"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,10 +35,14 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 
-	"kubevirt.io/kubevirt/pkg/virt-operator/creation/components"
-	"kubevirt.io/kubevirt/pkg/virt-operator/creation/rbac"
-	"kubevirt.io/kubevirt/tools/marketplace/helper"
+	"kubevirt.io/kubevirt/pkg/virt-operator/resource/generate/components"
+	"kubevirt.io/kubevirt/pkg/virt-operator/resource/generate/rbac"
 	"kubevirt.io/kubevirt/tools/util"
+)
+
+const (
+	customImageExample   = "Examples: some.registry.com@sha256:abcdefghijklmnop, other.registry.com:tag1"
+	shaEnvDeprecationMsg = "This argument is deprecated. Please use virt-*-image instead"
 )
 
 type templateData struct {
@@ -64,8 +68,24 @@ type templateData struct {
 	VirtControllerSha      string
 	VirtHandlerSha         string
 	VirtLauncherSha        string
+	VirtExportProxySha     string
+	VirtExportServerSha    string
+	GsSha                  string
+	PrHelperSha            string
+	RunbookURLTemplate     string
 	PriorityClassSpec      string
+	FeatureGates           []string
+	InfraReplicas          uint8
 	GeneratedManifests     map[string]string
+	VirtOperatorImage      string
+	VirtApiImage           string
+	VirtControllerImage    string
+	VirtHandlerImage       string
+	VirtLauncherImage      string
+	VirtExportProxyImage   string
+	VirtExportServerImage  string
+	GsImage                string
+	PrHelperImage          string
 }
 
 func main() {
@@ -84,17 +104,38 @@ func main() {
 	processVars := flag.Bool("process-vars", false, "")
 	kubeVirtLogoPath := flag.String("kubevirt-logo-path", "", "")
 	packageName := flag.String("package-name", "", "")
-	bundleOutDir := flag.String("bundle-out-dir", "", "")
 	quayRepository := flag.String("quay-repository", "", "")
-	virtOperatorSha := flag.String("virt-operator-sha", "", "")
-	virtApiSha := flag.String("virt-api-sha", "", "")
-	virtControllerSha := flag.String("virt-controller-sha", "", "")
-	virtHandlerSha := flag.String("virt-handler-sha", "", "")
-	virtLauncherSha := flag.String("virt-launcher-sha", "", "")
+	virtOperatorSha := flag.String("virt-operator-sha", "", shaEnvDeprecationMsg)
+	virtApiSha := flag.String("virt-api-sha", "", shaEnvDeprecationMsg)
+	virtControllerSha := flag.String("virt-controller-sha", "", shaEnvDeprecationMsg)
+	virtHandlerSha := flag.String("virt-handler-sha", "", shaEnvDeprecationMsg)
+	virtLauncherSha := flag.String("virt-launcher-sha", "", shaEnvDeprecationMsg)
+	virtExportProxySha := flag.String("virt-exportproxy-sha", "", shaEnvDeprecationMsg)
+	virtExportServerSha := flag.String("virt-exportserver-sha", "", shaEnvDeprecationMsg)
+	gsSha := flag.String("gs-sha", "", "")
+	prHelperSha := flag.String("pr-helper-sha", "", "")
+	runbookURLTemplate := flag.String("runbook-url-template", "", "")
+	featureGates := flag.String("feature-gates", "", "")
+	infraReplicas := flag.Uint("infra-replicas", 0, "")
+	virtOperatorImage := flag.String("virt-operator-image", "", "custom image for virt-operator")
+	virtApiImage := flag.String("virt-api-image", "", "custom image for virt-api. "+customImageExample)
+	virtControllerImage := flag.String("virt-controller-image", "", "custom image for virt-controller. "+customImageExample)
+	virtHandlerImage := flag.String("virt-handler-image", "", "custom image for virt-handler. "+customImageExample)
+	virtLauncherImage := flag.String("virt-launcher-image", "", "custom image for virt-launcher. "+customImageExample)
+	virtExportProxyImage := flag.String("virt-export-proxy-image", "", "custom image for virt-export-proxy. "+customImageExample)
+	virtExportServerImage := flag.String("virt-export-server-image", "", "custom image for virt-export-server. "+customImageExample)
+	gsImage := flag.String("gs-image", "", "custom image for gs. "+customImageExample)
+	prHelperImage := flag.String("pr-helper-image", "", "custom image for pr-helper. "+customImageExample)
 
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
 	pflag.CommandLine.ParseErrorsWhitelist.UnknownFlags = true
 	pflag.Parse()
+
+	if path := os.Getenv("BUILD_WORKSPACE_DIRECTORY"); path != "" {
+		if err := os.Chdir(path); err != nil {
+			panic(err)
+		}
+	}
 
 	if !(*processFiles || *processVars) {
 		panic("at least one of process-files or process-vars must be true")
@@ -102,6 +143,11 @@ func main() {
 
 	data := templateData{
 		GeneratedManifests: make(map[string]string),
+	}
+
+	if featureGates != nil {
+
+		*featureGates = strings.Replace(*featureGates, "NonRootExperimental", "NonRoot", 1)
 	}
 
 	if *processVars {
@@ -120,6 +166,11 @@ func main() {
 		data.VirtControllerSha = *virtControllerSha
 		data.VirtHandlerSha = *virtHandlerSha
 		data.VirtLauncherSha = *virtLauncherSha
+		data.VirtExportProxySha = *virtExportProxySha
+		data.VirtExportServerSha = *virtExportServerSha
+		data.GsSha = *gsSha
+		data.PrHelperSha = *prHelperSha
+		data.RunbookURLTemplate = *runbookURLTemplate
 		data.OperatorRules = getOperatorRules()
 		data.KubeVirtLogo = getKubeVirtLogo(*kubeVirtLogoPath)
 		data.PackageName = *packageName
@@ -127,26 +178,20 @@ func main() {
 		data.ReplacesCsvVersion = ""
 		data.OperatorDeploymentSpec = getOperatorDeploymentSpec(data, 2)
 		data.PriorityClassSpec = getPriorityClassSpec(2)
-
-		// operator deployment differs a bit in normal manifest and CSV
-		if strings.Contains(*inputFile, ".clusterserviceversion.yaml") {
-			// prevent loading latest bundle from Quay for every file, only do it for the CSV manifest
-			if *bundleOutDir != "" && data.QuayRepository != "" {
-				bundleHelper, err := helper.NewBundleHelper(*quayRepository, *packageName)
-				if err != nil {
-					panic(err)
-				}
-				latestVersion := bundleHelper.GetLatestPublishedCSVVersion()
-				if latestVersion != "" {
-					// prevent generating the same version again
-					if strings.HasSuffix(latestVersion, *csvVersion) {
-						panic(fmt.Errorf("CSV version %s is already published!", *csvVersion))
-					}
-					data.ReplacesCsvVersion = latestVersion
-					// also copy old manifests to out dir
-					bundleHelper.AddOldManifests(*bundleOutDir, *csvVersion)
-				}
-			}
+		data.VirtOperatorImage = *virtOperatorImage
+		data.VirtApiImage = *virtApiImage
+		data.VirtControllerImage = *virtControllerImage
+		data.VirtHandlerImage = *virtHandlerImage
+		data.VirtLauncherImage = *virtLauncherImage
+		data.VirtExportProxyImage = *virtExportProxyImage
+		data.VirtExportServerImage = *virtExportServerImage
+		data.GsImage = *gsImage
+		data.PrHelperImage = *prHelperImage
+		if *featureGates != "" {
+			data.FeatureGates = strings.Split(*featureGates, ",")
+		}
+		if *infraReplicas != 0 {
+			data.InfraReplicas = uint8(*infraReplicas)
 		}
 
 	} else {
@@ -165,6 +210,8 @@ func main() {
 		data.VirtControllerSha = "{{.VirtControllerSha}}"
 		data.VirtHandlerSha = "{{.VirtHandlerSha}}"
 		data.VirtLauncherSha = "{{.VirtLauncherSha}}"
+		data.VirtExportProxySha = "{{.VirtExportProxySha}}"
+		data.VirtExportServerSha = "{{.VirtExportServerSha}}"
 		data.ReplacesCsvVersion = "{{.ReplacesCsvVersion}}"
 		data.OperatorDeploymentSpec = "{{.OperatorDeploymentSpec}}"
 		data.OperatorCsv = "{{.OperatorCsv}}"
@@ -172,10 +219,18 @@ func main() {
 		data.KubeVirtLogo = "{{.KubeVirtLogo}}"
 		data.PackageName = "{{.PackageName}}"
 		data.CreatedAt = "{{.CreatedAt}}"
+		data.VirtApiImage = "{{.VirtApiImage}}"
+		data.VirtControllerImage = "{{.VirtControllerImage}}"
+		data.VirtHandlerImage = "{{.VirtHandlerImage}}"
+		data.VirtLauncherImage = "{{.VirtLauncherImage}}"
+		data.VirtExportProxyImage = "{{.VirtExportProxyImage}}"
+		data.VirtExportServerImage = "{{.VirtExportServerImage}}"
+		data.GsImage = "{{.GsImage}}"
+		data.PrHelperImage = "{{.PrHelperImage}}"
 	}
 
 	if *processFiles {
-		manifests, err := ioutil.ReadDir(*genDir)
+		manifests, err := os.ReadDir(*genDir)
 		if err != nil {
 			panic(err)
 		}
@@ -184,7 +239,7 @@ func main() {
 			if manifest.IsDir() {
 				continue
 			}
-			b, err := ioutil.ReadFile(filepath.Join(*genDir, manifest.Name()))
+			b, err := os.ReadFile(filepath.Join(*genDir, manifest.Name()))
 			if err != nil {
 				panic(err)
 			}
@@ -232,13 +287,27 @@ func getOperatorDeploymentSpec(data templateData, indentation int) string {
 		data.DockerPrefix,
 		data.ImagePrefix,
 		version,
-		v1.PullPolicy(data.ImagePullPolicy),
 		data.Verbosity,
 		data.DockerTag,
 		data.VirtApiSha,
 		data.VirtControllerSha,
 		data.VirtHandlerSha,
-		data.VirtLauncherSha)
+		data.VirtLauncherSha,
+		data.VirtExportProxySha,
+		data.VirtExportServerSha,
+		data.GsSha,
+		data.PrHelperSha,
+		data.RunbookURLTemplate,
+		data.VirtApiImage,
+		data.VirtControllerImage,
+		data.VirtHandlerImage,
+		data.VirtLauncherImage,
+		data.VirtExportProxyImage,
+		data.VirtExportServerImage,
+		data.GsImage,
+		data.PrHelperImage,
+		data.VirtOperatorImage,
+		v1.PullPolicy(data.ImagePullPolicy))
 	if err != nil {
 		panic(err)
 	}
@@ -283,7 +352,7 @@ func getKubeVirtLogo(path string) string {
 
 	// Read entire file into byte slice.
 	reader := bufio.NewReader(file)
-	content, err := ioutil.ReadAll(reader)
+	content, err := io.ReadAll(reader)
 	if err != nil {
 		panic(err)
 	}

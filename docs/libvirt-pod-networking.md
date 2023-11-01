@@ -6,7 +6,7 @@ Author: Fabian Deutsch \<fabiand@redhat.com\>
 
 Today, networking in KubeVirt is not integrated with Kubernetes. In order to
 have network connectivity inside the VMI, a user must create a specific VMI Spec
-that induces a particular libvirt domxml, in order to reuse a pre-exising host
+that induces a particular libvirt domxml, in order to reuse a pre-existing host
 network interface.
 
 This is obviously suboptimal:
@@ -69,7 +69,7 @@ achieve the same, and provide IP addresses to VMIs, not just a interface.
 
 During this document we call each of these _new_ pod interfaces _VMI interface_,
 in order to differentiate them from the originally-allocated pod interface
-(`eth0`). The original pod interface (`eth0`) is never modified by Kubevirt,
+(`eth0`). The original pod interface (`eth0`) is never modified by KubeVirt,
 and can be used to access libvirtd (through the libvirtd pod IP) or to provide
 VMI-centric services through the VMI pod IP.
 
@@ -83,7 +83,7 @@ The required steps to enable networking as described are:
    and configure libvirt to provide the remembered IP address to the VMI.
    Achieved by adding a DHCP host entry, which maps the vNIC MAC address to the
    remembered IP
-4. On VMI shutdown, delete all VMI interfaces. They can be infered by following
+4. On VMI shutdown, delete all VMI interfaces. They can be inferred by following
    the libvirt networks associated with the vNICs
 
 **Note:** The _new_ VMI interface can not be directly attached to the VMI,

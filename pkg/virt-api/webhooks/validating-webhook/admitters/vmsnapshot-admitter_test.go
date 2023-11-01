@@ -20,23 +20,26 @@
 package admitters
 
 import (
+	"context"
 	"encoding/json"
 
+	"k8s.io/utils/pointer"
+
 	"github.com/golang/mock/gomock"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"k8s.io/api/admission/v1beta1"
+	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
-	k8sv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	v1 "kubevirt.io/client-go/api/v1"
-	snapshotv1 "kubevirt.io/client-go/apis/snapshot/v1alpha1"
+	v1 "kubevirt.io/api/core/v1"
+	snapshotv1 "kubevirt.io/api/snapshot/v1alpha1"
 	"kubevirt.io/client-go/kubecli"
+
 	"kubevirt.io/kubevirt/pkg/testutils"
 	"kubevirt.io/kubevirt/pkg/virt-api/webhooks"
 	virtconfig "kubevirt.io/kubevirt/pkg/virt-config"
@@ -44,9 +47,9 @@ import (
 
 var _ = Describe("Validating VirtualMachineSnapshot Admitter", func() {
 	vmName := "vm"
-	apiGroup := "kubevirt.io/v1alpha3"
+	apiGroup := "kubevirt.io"
 
-	config, configMapInformer, _, _ := testutils.NewFakeClusterConfig(&k8sv1.ConfigMap{})
+	config, _, kvInformer := testutils.NewFakeClusterConfigUsingKVConfig(&v1.KubeVirtConfiguration{})
 
 	Context("Without feature gate enabled", func() {
 		It("should reject anything", func() {
@@ -54,22 +57,35 @@ var _ = Describe("Validating VirtualMachineSnapshot Admitter", func() {
 				Spec: snapshotv1.VirtualMachineSnapshotSpec{},
 			}
 
-			ar := createAdmissionReview(snapshot)
+			ar := createSnapshotAdmissionReview(snapshot)
 			resp := createTestVMSnapshotAdmitter(config, nil).Admit(ar)
 			Expect(resp.Allowed).To(BeFalse())
-			Expect(resp.Result.Message).Should(Equal("Snapshot feature gate not enabled"))
+			Expect(resp.Result.Message).Should(Equal("snapshot feature gate not enabled"))
 		})
 	})
 
 	Context("With feature gate enabled", func() {
 		enableFeatureGate := func(featureGate string) {
-			testutils.UpdateFakeClusterConfig(configMapInformer, &k8sv1.ConfigMap{
-				Data: map[string]string{virtconfig.FeatureGatesKey: featureGate},
+			testutils.UpdateFakeKubeVirtClusterConfig(kvInformer, &v1.KubeVirt{
+				Spec: v1.KubeVirtSpec{
+					Configuration: v1.KubeVirtConfiguration{
+						DeveloperConfiguration: &v1.DeveloperConfiguration{
+							FeatureGates: []string{featureGate},
+						},
+					},
+				},
 			})
 		}
-
 		disableFeatureGates := func() {
-			testutils.UpdateFakeClusterConfig(configMapInformer, &k8sv1.ConfigMap{})
+			testutils.UpdateFakeKubeVirtClusterConfig(kvInformer, &v1.KubeVirt{
+				Spec: v1.KubeVirtSpec{
+					Configuration: v1.KubeVirtConfiguration{
+						DeveloperConfiguration: &v1.DeveloperConfiguration{
+							FeatureGates: make([]string, 0),
+						},
+					},
+				},
+			})
 		}
 
 		BeforeEach(func() {
@@ -81,15 +97,15 @@ var _ = Describe("Validating VirtualMachineSnapshot Admitter", func() {
 		})
 
 		It("should reject invalid request resource", func() {
-			ar := &v1beta1.AdmissionReview{
-				Request: &v1beta1.AdmissionRequest{
+			ar := &admissionv1.AdmissionReview{
+				Request: &admissionv1.AdmissionRequest{
 					Resource: webhooks.VirtualMachineGroupVersionResource,
 				},
 			}
 
 			resp := createTestVMSnapshotAdmitter(config, nil).Admit(ar)
 			Expect(resp.Allowed).To(BeFalse())
-			Expect(resp.Result.Message).Should(ContainSubstring("Unexpected Resource"))
+			Expect(resp.Result.Message).Should(ContainSubstring("unexpected resource"))
 		})
 
 		It("should reject missing apigroup", func() {
@@ -97,10 +113,10 @@ var _ = Describe("Validating VirtualMachineSnapshot Admitter", func() {
 				Spec: snapshotv1.VirtualMachineSnapshotSpec{},
 			}
 
-			ar := createAdmissionReview(snapshot)
+			ar := createSnapshotAdmissionReview(snapshot)
 			resp := createTestVMSnapshotAdmitter(config, nil).Admit(ar)
 			Expect(resp.Allowed).To(BeFalse())
-			Expect(len(resp.Result.Details.Causes)).To(Equal(1))
+			Expect(resp.Result.Details.Causes).To(HaveLen(1))
 			Expect(resp.Result.Details.Causes[0].Field).To(Equal("spec.source.apiGroup"))
 		})
 
@@ -115,10 +131,10 @@ var _ = Describe("Validating VirtualMachineSnapshot Admitter", func() {
 				},
 			}
 
-			ar := createAdmissionReview(snapshot)
+			ar := createSnapshotAdmissionReview(snapshot)
 			resp := createTestVMSnapshotAdmitter(config, nil).Admit(ar)
 			Expect(resp.Allowed).To(BeFalse())
-			Expect(len(resp.Result.Details.Causes)).To(Equal(1))
+			Expect(resp.Result.Details.Causes).To(HaveLen(1))
 			Expect(resp.Result.Details.Causes[0].Field).To(Equal("spec.source.name"))
 		})
 
@@ -143,10 +159,10 @@ var _ = Describe("Validating VirtualMachineSnapshot Admitter", func() {
 				},
 			}
 
-			ar := createUpdateAdmissionReview(oldSnapshot, snapshot)
+			ar := createSnapshotUpdateAdmissionReview(oldSnapshot, snapshot)
 			resp := createTestVMSnapshotAdmitter(config, nil).Admit(ar)
 			Expect(resp.Allowed).To(BeFalse())
-			Expect(len(resp.Result.Details.Causes)).To(Equal(1))
+			Expect(resp.Result.Details.Causes).To(HaveLen(1))
 			Expect(resp.Result.Details.Causes[0].Field).To(Equal("spec"))
 		})
 
@@ -174,7 +190,7 @@ var _ = Describe("Validating VirtualMachineSnapshot Admitter", func() {
 				},
 			}
 
-			ar := createUpdateAdmissionReview(oldSnapshot, snapshot)
+			ar := createSnapshotUpdateAdmissionReview(oldSnapshot, snapshot)
 			resp := createTestVMSnapshotAdmitter(config, nil).Admit(ar)
 			Expect(resp.Allowed).To(BeTrue())
 		})
@@ -190,7 +206,7 @@ var _ = Describe("Validating VirtualMachineSnapshot Admitter", func() {
 				}
 			})
 
-			It("should reject when VM is running", func() {
+			It("should accept when VM is running", func() {
 				snapshot := &snapshotv1.VirtualMachineSnapshot{
 					Spec: snapshotv1.VirtualMachineSnapshotSpec{
 						Source: corev1.TypedLocalObjectReference{
@@ -204,11 +220,9 @@ var _ = Describe("Validating VirtualMachineSnapshot Admitter", func() {
 				t := true
 				vm.Spec.Running = &t
 
-				ar := createAdmissionReview(snapshot)
+				ar := createSnapshotAdmissionReview(snapshot)
 				resp := createTestVMSnapshotAdmitter(config, vm).Admit(ar)
-				Expect(resp.Allowed).To(BeFalse())
-				Expect(len(resp.Result.Details.Causes)).To(Equal(1))
-				Expect(resp.Result.Details.Causes[0].Field).To(Equal("spec.source.name"))
+				Expect(resp.Allowed).To(BeTrue())
 			})
 
 			It("should reject invalid kind", func() {
@@ -225,10 +239,10 @@ var _ = Describe("Validating VirtualMachineSnapshot Admitter", func() {
 				t := true
 				vm.Spec.Running = &t
 
-				ar := createAdmissionReview(snapshot)
+				ar := createSnapshotAdmissionReview(snapshot)
 				resp := createTestVMSnapshotAdmitter(config, vm).Admit(ar)
 				Expect(resp.Allowed).To(BeFalse())
-				Expect(len(resp.Result.Details.Causes)).To(Equal(1))
+				Expect(resp.Result.Details.Causes).To(HaveLen(1))
 				Expect(resp.Result.Details.Causes[0].Field).To(Equal("spec.source.kind"))
 			})
 
@@ -247,11 +261,41 @@ var _ = Describe("Validating VirtualMachineSnapshot Admitter", func() {
 				t := true
 				vm.Spec.Running = &t
 
-				ar := createAdmissionReview(snapshot)
+				ar := createSnapshotAdmissionReview(snapshot)
 				resp := createTestVMSnapshotAdmitter(config, vm).Admit(ar)
 				Expect(resp.Allowed).To(BeFalse())
-				Expect(len(resp.Result.Details.Causes)).To(Equal(1))
+				Expect(resp.Result.Details.Causes).To(HaveLen(1))
 				Expect(resp.Result.Details.Causes[0].Field).To(Equal("spec.source.apiGroup"))
+			})
+
+			It("should reject persistent storage", func() {
+				vm.Spec.Template = &v1.VirtualMachineInstanceTemplateSpec{
+					Spec: v1.VirtualMachineInstanceSpec{
+						Domain: v1.DomainSpec{
+							Devices: v1.Devices{
+								TPM: &v1.TPMDevice{
+									Persistent: pointer.BoolPtr(true),
+								},
+							},
+						},
+					},
+				}
+				snapshot := &snapshotv1.VirtualMachineSnapshot{
+					Spec: snapshotv1.VirtualMachineSnapshotSpec{
+						Source: corev1.TypedLocalObjectReference{
+							APIGroup: &apiGroup,
+							Kind:     "VirtualMachine",
+							Name:     vmName,
+						},
+					},
+				}
+
+				ar := createSnapshotAdmissionReview(snapshot)
+				resp := createTestVMSnapshotAdmitter(config, vm).Admit(ar)
+				Expect(resp.Allowed).To(BeFalse())
+				Expect(resp.Result.Details.Causes).To(HaveLen(1))
+				Expect(resp.Result.Details.Causes[0].Field).To(Equal("spec.source.name"))
+				Expect(resp.Result.Details.Causes[0].Message).To(ContainSubstring("needs backend storage"))
 			})
 
 			It("should accept when VM is not running", func() {
@@ -268,7 +312,7 @@ var _ = Describe("Validating VirtualMachineSnapshot Admitter", func() {
 				f := false
 				vm.Spec.Running = &f
 
-				ar := createAdmissionReview(snapshot)
+				ar := createSnapshotAdmissionReview(snapshot)
 				resp := createTestVMSnapshotAdmitter(config, vm).Admit(ar)
 				Expect(resp.Allowed).To(BeTrue())
 			})
@@ -276,12 +320,12 @@ var _ = Describe("Validating VirtualMachineSnapshot Admitter", func() {
 	})
 })
 
-func createAdmissionReview(snapshot *snapshotv1.VirtualMachineSnapshot) *v1beta1.AdmissionReview {
+func createSnapshotAdmissionReview(snapshot *snapshotv1.VirtualMachineSnapshot) *admissionv1.AdmissionReview {
 	bytes, _ := json.Marshal(snapshot)
 
-	ar := &v1beta1.AdmissionReview{
-		Request: &v1beta1.AdmissionRequest{
-			Operation: v1beta1.Create,
+	ar := &admissionv1.AdmissionReview{
+		Request: &admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
 			Namespace: "foo",
 			Resource: metav1.GroupVersionResource{
 				Group:    "snapshot.kubevirt.io",
@@ -296,13 +340,13 @@ func createAdmissionReview(snapshot *snapshotv1.VirtualMachineSnapshot) *v1beta1
 	return ar
 }
 
-func createUpdateAdmissionReview(old, current *snapshotv1.VirtualMachineSnapshot) *v1beta1.AdmissionReview {
+func createSnapshotUpdateAdmissionReview(old, current *snapshotv1.VirtualMachineSnapshot) *admissionv1.AdmissionReview {
 	oldBytes, _ := json.Marshal(old)
 	currentBytes, _ := json.Marshal(current)
 
-	ar := &v1beta1.AdmissionReview{
-		Request: &v1beta1.AdmissionRequest{
-			Operation: v1beta1.Update,
+	ar := &admissionv1.AdmissionReview{
+		Request: &admissionv1.AdmissionRequest{
+			Operation: admissionv1.Update,
 			Namespace: "foo",
 			Resource: metav1.GroupVersionResource{
 				Group:    "snapshot.kubevirt.io",
@@ -327,9 +371,9 @@ func createTestVMSnapshotAdmitter(config *virtconfig.ClusterConfig, vm *v1.Virtu
 	virtClient.EXPECT().VirtualMachine(gomock.Any()).Return(vmInterface).AnyTimes()
 	if vm == nil {
 		err := errors.NewNotFound(schema.GroupResource{Group: "kubevirt.io", Resource: "virtualmachines"}, "foo")
-		vmInterface.EXPECT().Get(gomock.Any(), gomock.Any()).Return(nil, err)
+		vmInterface.EXPECT().Get(context.Background(), gomock.Any(), gomock.Any()).Return(nil, err).AnyTimes()
 	} else {
-		vmInterface.EXPECT().Get(vm.Name, gomock.Any()).Return(vm, nil)
+		vmInterface.EXPECT().Get(context.Background(), vm.Name, gomock.Any()).Return(vm, nil).AnyTimes()
 	}
 	return &VMSnapshotAdmitter{Config: config, Client: virtClient}
 }

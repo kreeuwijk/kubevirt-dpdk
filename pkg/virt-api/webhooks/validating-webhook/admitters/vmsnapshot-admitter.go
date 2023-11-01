@@ -20,19 +20,23 @@
 package admitters
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 
-	"k8s.io/api/admission/v1beta1"
+	backendstorage "kubevirt.io/kubevirt/pkg/storage/backend-storage"
+
+	admissionv1 "k8s.io/api/admission/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8sfield "k8s.io/apimachinery/pkg/util/validation/field"
 
-	v1 "kubevirt.io/client-go/api/v1"
-	snapshotv1 "kubevirt.io/client-go/apis/snapshot/v1alpha1"
+	"kubevirt.io/api/core"
+
+	snapshotv1 "kubevirt.io/api/snapshot/v1alpha1"
 	"kubevirt.io/client-go/kubecli"
+
 	webhookutils "kubevirt.io/kubevirt/pkg/util/webhooks"
 	virtconfig "kubevirt.io/kubevirt/pkg/virt-config"
 )
@@ -52,14 +56,14 @@ func NewVMSnapshotAdmitter(config *virtconfig.ClusterConfig, client kubecli.Kube
 }
 
 // Admit validates an AdmissionReview
-func (admitter *VMSnapshotAdmitter) Admit(ar *v1beta1.AdmissionReview) *v1beta1.AdmissionResponse {
+func (admitter *VMSnapshotAdmitter) Admit(ar *admissionv1.AdmissionReview) *admissionv1.AdmissionResponse {
 	if ar.Request.Resource.Group != snapshotv1.SchemeGroupVersion.Group ||
 		ar.Request.Resource.Resource != "virtualmachinesnapshots" {
-		return webhookutils.ToAdmissionResponseError(fmt.Errorf("Unexpected Resource %+v", ar.Request.Resource))
+		return webhookutils.ToAdmissionResponseError(fmt.Errorf("unexpected resource %+v", ar.Request.Resource))
 	}
 
-	if ar.Request.Operation == v1beta1.Create && !admitter.Config.SnapshotEnabled() {
-		return webhookutils.ToAdmissionResponseError(fmt.Errorf("Snapshot feature gate not enabled"))
+	if ar.Request.Operation == admissionv1.Create && !admitter.Config.SnapshotEnabled() {
+		return webhookutils.ToAdmissionResponseError(fmt.Errorf("snapshot feature gate not enabled"))
 	}
 
 	vmSnapshot := &snapshotv1.VirtualMachineSnapshot{}
@@ -72,7 +76,7 @@ func (admitter *VMSnapshotAdmitter) Admit(ar *v1beta1.AdmissionReview) *v1beta1.
 	var causes []metav1.StatusCause
 
 	switch ar.Request.Operation {
-	case v1beta1.Create:
+	case admissionv1.Create:
 		sourceField := k8sfield.NewPath("spec", "source")
 
 		if vmSnapshot.Spec.Source.APIGroup == nil {
@@ -86,13 +90,8 @@ func (admitter *VMSnapshotAdmitter) Admit(ar *v1beta1.AdmissionReview) *v1beta1.
 			break
 		}
 
-		gv, err := schema.ParseGroupVersion(*vmSnapshot.Spec.Source.APIGroup)
-		if err != nil {
-			return webhookutils.ToAdmissionResponseError(err)
-		}
-
-		switch gv.Group {
-		case v1.GroupName:
+		switch *vmSnapshot.Spec.Source.APIGroup {
+		case core.GroupName:
 			switch vmSnapshot.Spec.Source.Kind {
 			case "VirtualMachine":
 				causes, err = admitter.validateCreateVM(sourceField.Child("name"), ar.Request.Namespace, vmSnapshot.Spec.Source.Name)
@@ -118,14 +117,14 @@ func (admitter *VMSnapshotAdmitter) Admit(ar *v1beta1.AdmissionReview) *v1beta1.
 			}
 		}
 
-	case v1beta1.Update:
+	case admissionv1.Update:
 		prevObj := &snapshotv1.VirtualMachineSnapshot{}
 		err = json.Unmarshal(ar.Request.OldObject.Raw, prevObj)
 		if err != nil {
 			return webhookutils.ToAdmissionResponseError(err)
 		}
 
-		if !reflect.DeepEqual(prevObj.Spec, vmSnapshot.Spec) {
+		if !equality.Semantic.DeepEqual(prevObj.Spec, vmSnapshot.Spec) {
 			causes = []metav1.StatusCause{
 				{
 					Type:    metav1.CauseTypeFieldValueInvalid,
@@ -142,14 +141,14 @@ func (admitter *VMSnapshotAdmitter) Admit(ar *v1beta1.AdmissionReview) *v1beta1.
 		return webhookutils.ToAdmissionResponse(causes)
 	}
 
-	reviewResponse := v1beta1.AdmissionResponse{
+	reviewResponse := admissionv1.AdmissionResponse{
 		Allowed: true,
 	}
 	return &reviewResponse
 }
 
 func (admitter *VMSnapshotAdmitter) validateCreateVM(field *k8sfield.Path, namespace, name string) ([]metav1.StatusCause, error) {
-	vm, err := admitter.Client.VirtualMachine(namespace).Get(name, &metav1.GetOptions{})
+	vm, err := admitter.Client.VirtualMachine(namespace).Get(context.Background(), name, &metav1.GetOptions{})
 	if errors.IsNotFound(err) {
 		return []metav1.StatusCause{
 			{
@@ -164,16 +163,15 @@ func (admitter *VMSnapshotAdmitter) validateCreateVM(field *k8sfield.Path, names
 		return nil, err
 	}
 
-	var causes []metav1.StatusCause
-
-	if vm.Spec.Running != nil && *vm.Spec.Running {
-		cause := metav1.StatusCause{
-			Type:    metav1.CauseTypeFieldValueInvalid,
-			Message: fmt.Sprintf("VirtualMachine %q is running", name),
-			Field:   field.String(),
-		}
-		causes = append(causes, cause)
+	if backendstorage.IsBackendStorageNeededForVM(vm) {
+		return []metav1.StatusCause{
+			{
+				Type:    metav1.CauseTypeFieldValueInvalid,
+				Message: fmt.Sprintf("VirtualMachine %q needs backend storage, which is not yet supported", name),
+				Field:   field.String(),
+			},
+		}, nil
 	}
 
-	return causes, nil
+	return []metav1.StatusCause{}, nil
 }

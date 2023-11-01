@@ -20,45 +20,67 @@
 package ephemeraldisk
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 
-	v1 "kubevirt.io/client-go/api/v1"
+	v1 "kubevirt.io/api/core/v1"
+
 	diskutils "kubevirt.io/kubevirt/pkg/ephemeral-disk-utils"
+	"kubevirt.io/kubevirt/pkg/util"
+	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/api"
 )
 
-var mountBaseDir = "/var/run/libvirt/kubevirt-ephemeral-disk"
-var pvcBaseDir = "/var/run/kubevirt-private/vmi-disks"
+const (
+	ephemeralDiskPVCBaseDir         = "/var/run/kubevirt-private/vmi-disks"
+	ephemeralDiskBlockDeviceBaseDir = "/dev"
+	ephemeralDiskFormat             = "raw"
+)
 
-func generateBaseDir() string {
-	return fmt.Sprintf("%s", mountBaseDir)
-}
-func generateVolumeMountDir(volumeName string) string {
-	baseDir := generateBaseDir()
-	return filepath.Join(baseDir, volumeName)
-}
-
-func getBackingFilePath(volumeName string) string {
-	return filepath.Join(pvcBaseDir, volumeName, "disk.img")
+type EphemeralDiskCreatorInterface interface {
+	CreateBackedImageForVolume(volume v1.Volume, backingFile string, backingFormat string) error
+	CreateEphemeralImages(vmi *v1.VirtualMachineInstance, domain *api.Domain) error
+	GetFilePath(volumeName string) string
+	Init() error
 }
 
-func SetLocalDirectory(dir string) error {
-	mountBaseDir = dir
-	return os.MkdirAll(dir, 0755)
+type ephemeralDiskCreator struct {
+	mountBaseDir    string
+	pvcBaseDir      string
+	blockDevBaseDir string
+	discCreateFunc  func(backingFile string, backingFormat string, imagePath string) ([]byte, error)
 }
 
-// Used by tests.
-func setBackingDirectory(dir string) error {
-	pvcBaseDir = dir
-	return os.MkdirAll(dir, 0755)
+func NewEphemeralDiskCreator(mountBaseDir string) *ephemeralDiskCreator {
+	return &ephemeralDiskCreator{
+		mountBaseDir:    mountBaseDir,
+		pvcBaseDir:      ephemeralDiskPVCBaseDir,
+		blockDevBaseDir: ephemeralDiskBlockDeviceBaseDir,
+		discCreateFunc:  createBackingDisk,
+	}
 }
 
-func createVolumeDirectory(volumeName string) error {
-	dir := generateVolumeMountDir(volumeName)
+func (c *ephemeralDiskCreator) Init() error {
+	return os.MkdirAll(c.mountBaseDir, 0755)
+}
 
-	err := os.MkdirAll(dir, 0755)
+func (c *ephemeralDiskCreator) generateVolumeMountDir(volumeName string) string {
+	return filepath.Join(c.mountBaseDir, volumeName)
+}
+
+func (c *ephemeralDiskCreator) getBackingFilePath(volumeName string, isBlockVolume bool) string {
+	if isBlockVolume {
+		return filepath.Join(c.blockDevBaseDir, volumeName)
+	}
+	return filepath.Join(c.pvcBaseDir, volumeName, "disk.img")
+}
+
+func (c *ephemeralDiskCreator) createVolumeDirectory(volumeName string) error {
+	dir := c.generateVolumeMountDir(volumeName)
+
+	err := util.MkdirAllWithNosec(dir)
 	if err != nil {
 		return err
 	}
@@ -66,58 +88,69 @@ func createVolumeDirectory(volumeName string) error {
 	return nil
 }
 
-func GetFilePath(volumeName string) string {
-	volumeMountDir := generateVolumeMountDir(volumeName)
+func (c *ephemeralDiskCreator) GetFilePath(volumeName string) string {
+	volumeMountDir := c.generateVolumeMountDir(volumeName)
 	return filepath.Join(volumeMountDir, "disk.qcow2")
 }
 
-func CreateBackedImageForVolume(volume v1.Volume, backingFile string) error {
-	err := createVolumeDirectory(volume.Name)
+func (c *ephemeralDiskCreator) CreateBackedImageForVolume(volume v1.Volume, backingFile string, backingFormat string) error {
+	err := c.createVolumeDirectory(volume.Name)
 	if err != nil {
 		return err
 	}
 
-	imagePath := GetFilePath(volume.Name)
+	imagePath := c.GetFilePath(volume.Name)
 
 	if _, err := os.Stat(imagePath); err == nil {
 		return nil
-	} else if !os.IsNotExist(err) {
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 
-	var args []string
-
-	args = append(args, "create")
-	args = append(args, "-f")
-	args = append(args, "qcow2")
-	args = append(args, "-b")
-	args = append(args, backingFile)
-	args = append(args, imagePath)
-
-	cmd := exec.Command("qemu-img", args...)
-	output, err := cmd.CombinedOutput()
+	output, err := c.discCreateFunc(backingFile, backingFormat, imagePath)
 
 	// Cleanup of previous images isn't really necessary as they're all on EmptyDir.
 	if err != nil {
 		return fmt.Errorf("qemu-img failed with output '%s': %v", string(output), err)
 	}
 
+	// #nosec G302: Poor file permissions used with chmod. Safe permission setting for files shared between virt-launcher and qemu.
+	if err = os.Chmod(imagePath, 0640); err != nil {
+		return fmt.Errorf("failed to change permissions on %s", imagePath)
+	}
+
 	// We need to ensure that the permissions are setup correctly.
-	err = diskutils.DefaultOwnershipManager.SetFileOwnership(imagePath)
+	err = diskutils.DefaultOwnershipManager.UnsafeSetFileOwnership(imagePath)
 	return err
 }
 
-func CreateEphemeralImages(vmi *v1.VirtualMachineInstance) error {
+func (c *ephemeralDiskCreator) CreateEphemeralImages(vmi *v1.VirtualMachineInstance, domain *api.Domain) error {
 	// The domain is setup to use the COW image instead of the base image. What we have
 	// to do here is only create the image where the domain expects it (GetFilePath)
 	// for each disk that requires it.
+	isBlockVolumes := diskutils.GetEphemeralBackingSourceBlockDevices(domain)
 	for _, volume := range vmi.Spec.Volumes {
 		if volume.VolumeSource.Ephemeral != nil {
-			if err := CreateBackedImageForVolume(volume, getBackingFilePath(volume.Name)); err != nil {
+			if err := c.CreateBackedImageForVolume(volume, c.getBackingFilePath(volume.Name, isBlockVolumes[volume.Name]), ephemeralDiskFormat); err != nil {
 				return err
 			}
 		}
 	}
 
 	return nil
+}
+
+func createBackingDisk(backingFile string, backingFormat string, imagePath string) ([]byte, error) {
+	// #nosec No risk for attacket injection. Parameters are predefined strings
+	cmd := exec.Command("qemu-img",
+		"create",
+		"-f",
+		"qcow2",
+		"-b",
+		backingFile,
+		"-F",
+		backingFormat,
+		imagePath,
+	)
+	return cmd.CombinedOutput()
 }

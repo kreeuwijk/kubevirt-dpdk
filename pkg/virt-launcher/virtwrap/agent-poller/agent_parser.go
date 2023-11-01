@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"regexp"
 
+	"kubevirt.io/client-go/log"
+
+	v1 "kubevirt.io/api/core/v1"
+
 	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/api"
 )
 
@@ -35,12 +39,26 @@ type IP struct {
 }
 
 var stripRE = regexp.MustCompile(`{\s*\"return\":\s*([{\[][\s\S]*[}\]])\s*}`)
+var stripStringRE = regexp.MustCompile(`{\s*\"return\":\s*\"([\s\S]*)\"\s*}`)
 
 // stripAgentResponse use regex to strip the wrapping item and returns the
 // embedded object.
 // It is a workaround so the amount of copy paste code is limited
 func stripAgentResponse(agentReply string) string {
 	return stripRE.FindStringSubmatch(agentReply)[1]
+}
+
+// stripAgentStringResponse use regex to stip the wrapping item
+// and returns the embedded string response
+// unlike stripAgentResponse the response is a simple string
+// rather then a complex object
+func stripAgentStringResponse(agentReply string) string {
+	result := stripStringRE.FindStringSubmatch(agentReply)
+	if len(result) < 2 {
+		return ""
+	}
+
+	return result[1]
 }
 
 // Hostname of the guest vm
@@ -73,7 +91,8 @@ type Filesystem struct {
 // AgentInfo from the guest VM serves the purpose
 // of checking the GA presence and version compatibility
 type AgentInfo struct {
-	Version string `json:"version"`
+	Version           string                     `json:"version"`
+	SupportedCommands []v1.GuestAgentCommandInfo `json:"supported_commands,omitempty"`
 }
 
 // parseGuestOSInfo parse agent reply string, extract guest os info
@@ -128,6 +147,18 @@ func parseHostname(agentReply string) (string, error) {
 	}
 
 	return result.Hostname, nil
+}
+
+// parseFSFreezeStatus from the agent response
+func ParseFSFreezeStatus(agentReply string) (api.FSFreeze, error) {
+	response := stripAgentStringResponse(agentReply)
+	if response == "" {
+		return api.FSFreeze{}, fmt.Errorf("Failed to strip FSFreeze status: %v", agentReply)
+	}
+
+	return api.FSFreeze{
+		Status: response,
+	}, nil
 }
 
 // parseTimezone from the agent response
@@ -195,55 +226,18 @@ func parseUsers(agentReply string) ([]api.User, error) {
 }
 
 // parseAgent gets the agent version from response
-func parseAgent(agentReply string) (string, error) {
-	result := AgentInfo{}
+func parseAgent(agentReply string) (AgentInfo, error) {
+	gaInfo := AgentInfo{}
 	response := stripAgentResponse(agentReply)
 
-	err := json.Unmarshal([]byte(response), &result)
+	err := json.Unmarshal([]byte(response), &gaInfo)
 	if err != nil {
-		return "", err
+		return AgentInfo{}, err
 	}
 
-	return result.Version, nil
-}
+	log.Log.V(3).Infof("guest agent info: %v", gaInfo)
 
-// MergeAgentStatusesWithDomainData merge QEMU interfaces with agent interfaces
-func MergeAgentStatusesWithDomainData(domInterfaces []api.Interface, interfaceStatuses []api.InterfaceStatus) []api.InterfaceStatus {
-	aliasByMac := map[string]string{}
-	for _, ifc := range domInterfaces {
-		mac := ifc.MAC.MAC
-		alias := ifc.Alias.Name
-		aliasByMac[mac] = alias
-	}
-
-	aliasesCoveredByAgent := []string{}
-	// Add alias from domain to interfaceStatus
-	for i, interfaceStatus := range interfaceStatuses {
-		if alias, exists := aliasByMac[interfaceStatus.Mac]; exists {
-			interfaceStatuses[i].Name = alias
-			aliasesCoveredByAgent = append(aliasesCoveredByAgent, alias)
-		}
-	}
-
-	// If interface present in domain was not found in interfaceStatuses, add it
-	for mac, alias := range aliasByMac {
-		isCoveredByAgentData := false
-		for _, coveredAlias := range aliasesCoveredByAgent {
-			if alias == coveredAlias {
-				isCoveredByAgentData = true
-				break
-			}
-		}
-		if !isCoveredByAgentData {
-			interfaceStatuses = append(interfaceStatuses,
-				api.InterfaceStatus{
-					Mac:  mac,
-					Name: alias,
-				},
-			)
-		}
-	}
-	return interfaceStatuses
+	return gaInfo, nil
 }
 
 // convertInterfaceStatusesFromAgentJSON does the conversion from agent info to api domain interfaces
@@ -269,7 +263,7 @@ func extractIPs(ipAddresses []IP) (string, []string) {
 	interfaceIPs := []string{}
 	var interfaceIP string
 	for _, ipAddr := range ipAddresses {
-		ip := fmt.Sprintf("%s/%d", ipAddr.IP, ipAddr.Prefix)
+		ip := ipAddr.IP
 		// Prefer ipv4 as the main interface IP
 		if ipAddr.Type == "ipv4" && interfaceIP == "" {
 			interfaceIP = ip

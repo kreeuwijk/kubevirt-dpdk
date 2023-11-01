@@ -1,6 +1,24 @@
 #!/bin/bash
-
+#
+# This file is part of the KubeVirt project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Copyright 2019 Red Hat, Inc.
+#
 set -euo pipefail
+
+export TIMESTAMP=${TIMESTAMP:-1}
 
 function usage {
     cat <<EOF
@@ -14,7 +32,7 @@ usage: [NUM_TESTS=x] [NEW_TESTS=test1_test|...|testn_test] $0 [kubevirtci_provid
         NEW_TESTS       what set of tests to run, defaults to all test files added or changed since
                         last merge commit
         TARGET_COMMIT   the commit id to use when fetching the changed test files
-                        note: leaving TARGET_COMMIT empty only works if on a git branch different from master.
+                        note: leaving TARGET_COMMIT empty only works if on a git branch different from main.
                         If /clonerefs is at work you need to provide a target commit, as then the latest commit is a
                         merge commit (resulting in no changes detected)
 
@@ -30,18 +48,40 @@ EOF
 function new_tests {
     local target_commit
     target_commit="$1"
-    # 1. fetch the changed file names from within the tests/ directory
-    # 2. grep all files ending with '_test.go'
-    # 3. remove `tests/` and `.go` to only have the test name
+    # 1. fetch the names of all added, copied, modified or renamed files
+    #    from within the tests/ directory
+    # 2. print only the last column of the line (in case of rename this is the new name)
+    # 3. grep all files ending with '.go' but not with '_suite.go'
     # 4. replace newline with `|`
     # 5. remove last `|`
-    git diff --name-status "${target_commit}".. -- tests/ \
-        | grep -v -E '^D.*' \
-        | grep -v '_suite' \
-        | grep -E '_test\.go$' \
-        | sed -E 's/[AM]\s+tests\/(.*_test)\.go/\1/' \
+    git diff --diff-filter=ACMR --name-status "${target_commit}".. -- tests/ \
+        | awk '{print $NF}' \
+        | grep '\.go' \
+        | grep -v '_suite\.go' \
         | tr '\n' '|' \
         | sed -E 's/\|$//'
+}
+
+# taking into account that each file containing changed tests is run several times per default
+# and considering overhead of cluster-up etc., we should just skip the run
+# if the total number of tests for all runs gets higher than the total number of tests
+function should_skip_test_run_due_to_too_many_tests() {
+    local new_tests="$1"
+    local test_start_pattern='(Specify|It|Entry)\('
+    local tests_total_estimate=0
+    while IFS= read -r -d '' test_file_name; do
+        tests_total_estimate=$(( tests_total_estimate + $(grep -hcE "${test_start_pattern}" "$test_file_name") ))
+    done < <(find tests/ -name '*.go' -print0)
+    local tests_to_run_estimate=0
+    for test_file_name in $(echo "${new_tests}" | tr '|' '\n'); do
+        set +e
+        tests_to_run_estimate=$(( tests_to_run_estimate + $(grep -hcE "${test_start_pattern}" "$test_file_name") ))
+        set -e
+    done
+    local tests_total_for_all_runs_estimate
+    tests_total_for_all_runs_estimate=$(( tests_to_run_estimate * NUM_TESTS * ${#TEST_LANES[@]} ))
+    echo -e "Estimates:\ttests_total_estimate: $tests_total_estimate\ttests_total_for_all_runs_estimate: $tests_total_for_all_runs_estimate"
+    [ "$tests_total_for_all_runs_estimate" -gt $tests_total_estimate ]
 }
 
 
@@ -80,7 +120,7 @@ if [[ -z ${NEW_TESTS-} ]]; then
     set -e
 
     # skip certain tests for now, as we don't have a strategy currently
-    NEW_TESTS=$(echo "$NEW_TESTS" | sed -E 's/\|?[^\|]*(sriov|multus|windows|gpu)[^\|]*//g')
+    NEW_TESTS=$(echo "$NEW_TESTS" | sed -E 's/\|?[^\|]*(sriov|multus|windows|gpu|mdev)[^\|]*//g' | sed 's/^|//')
 fi
 if [[ -z "${NEW_TESTS}" ]]; then
     echo "Nothing to test"
@@ -91,15 +131,7 @@ echo "Test files touched: $(echo ${NEW_TESTS} | tr '|' ',')"
 NUM_TESTS=${NUM_TESTS-3}
 echo "Number of per lane runs: $NUM_TESTS"
 
-test_start_pattern='(Specify|It|Entry)\('
-tests_total_estimate=$(find tests/ -name '*_test.go' -print0 | xargs -0 grep -hcE "${test_start_pattern}" | awk '{total += $1} END {print total}')
-tests_to_run_estimate=$(echo "${NEW_TESTS}" | tr '|' '\n' | sed 's/.*/tests\/&\.go/g' | xargs grep -hcE "${test_start_pattern}" | awk '{total += $1} END {print total}')
-tests_total_for_all_runs_estimate=$(expr $tests_to_run_estimate \* $NUM_TESTS \* ${#TEST_LANES[@]})
-echo -e "Estimates:\ttests_total_estimate: $tests_total_estimate\ttests_total_for_all_runs_estimate: $tests_total_for_all_runs_estimate"
-if [ $tests_total_for_all_runs_estimate -gt $tests_total_estimate ]; then
-    # taking into account that each file containing changed tests is run several times per default
-    # and considering overhead of cluster-up etc., we should just skip the run
-    # if the total number of tests for all runs gets higher than the total number of tests
+if should_skip_test_run_due_to_too_many_tests "${NEW_TESTS}"; then
     echo "Skipping run due to number of tests in total being too high for repeated run."
     exit 0
 fi
@@ -112,12 +144,15 @@ for lane in "${TEST_LANES[@]}"; do
 
     export KUBEVIRT_PROVIDER="$lane"
     export KUBEVIRT_NUM_NODES=2
+    export KUBEVIRT_WITH_CNAO="true"
+    export KUBEVIRT_DEPLOY_CDI="true"
+    export KUBEVIRT_NUM_SECONDARY_NICS=1
     make cluster-up
 
     for i in $(seq 1 "$NUM_TESTS"); do
         echo "test lane: $lane, run: $i"
         make cluster-sync
-        ginko_params="--ginkgo.noColor --ginkgo.succinct -ginkgo.slowSpecThreshold=30 --ginkgo.focus=${NEW_TESTS} --ginkgo.regexScansFilePath=true"
+        ginko_params="-no-color -succinct -slow-spec-threshold=30s -focus=${NEW_TESTS} -skip=QUARANTINE -regexScansFilePath=true"
         FUNC_TEST_ARGS="$ginko_params" make functest
         if [[ $? -ne 0 ]]; then
             echo "test lane: $lane, run: $i, tests failed!"

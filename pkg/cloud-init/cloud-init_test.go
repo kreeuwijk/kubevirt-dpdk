@@ -22,20 +22,22 @@ package cloudinit
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	k8sv1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1 "kubevirt.io/client-go/api/v1"
-	"kubevirt.io/client-go/precond"
+	v1 "kubevirt.io/api/core/v1"
+
+	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/api"
 )
 
 var _ = Describe("CloudInit", func() {
@@ -58,7 +60,7 @@ var _ = Describe("CloudInit", func() {
 		err := os.Mkdir(volumeDir, 0700)
 		Expect(err).To(Not(HaveOccurred()), "could not create volume dir: ", volumeDir)
 		for fileName, content := range files {
-			err = ioutil.WriteFile(
+			err = os.WriteFile(
 				filepath.Join(volumeDir, fileName),
 				[]byte(content),
 				0644)
@@ -68,8 +70,10 @@ var _ = Describe("CloudInit", func() {
 	}
 
 	BeforeEach(func() {
-		tmpDir, _ = ioutil.TempDir("", "cloudinittest")
-		err := SetLocalDirectory(tmpDir)
+		var err error
+		tmpDir, err = os.MkdirTemp("", "cloudinittest")
+		Expect(err).ToNot(HaveOccurred())
+		err = SetLocalDirectory(tmpDir)
 		if err != nil {
 			panic(err)
 		}
@@ -97,11 +101,12 @@ var _ = Describe("CloudInit", func() {
 	})
 	Describe("Data Model", func() {
 		Context("verify meta-data model", func() {
-			It("shuold match the generated devices metadata", func() {
+			It("should match the generated configdrive metadata", func() {
 				exampleJSONParsed := `{
-  "instance-id": "fake.fake-namespace",
-  "local-hostname": "fake",
-  "uuid": "5d307ca9-b3ef-428c-8861-06e72d69f223",
+  "instance_type": "fake.fake-instancetype",
+  "instance_id": "fake.fake-namespace",
+  "local_hostname": "fake",
+  "uuid": "fake.fake-namespace",
   "devices": [
     {
       "type": "nic",
@@ -112,26 +117,97 @@ var _ = Describe("CloudInit", func() {
         "testtag"
       ]
     }
-  ]
+  ],
+  "public_keys": {
+    "0": "somekey"
+  }
 }`
 				devices := []DeviceData{
 					{
 						Type:    NICMetadataType,
-						Bus:     "pci",
+						Bus:     api.AddressPCI,
 						Address: "0000:01:00:0",
 						MAC:     "02:00:00:84:e9:58",
 						Tags:    []string{"testtag"},
 					},
 				}
 
-				metadataStruct := Metadata{
+				metadataStruct := ConfigDriveMetadata{
+					InstanceType:  "fake.fake-instancetype",
 					InstanceID:    "fake.fake-namespace",
 					LocalHostname: "fake",
-					UUID:          "5d307ca9-b3ef-428c-8861-06e72d69f223",
+					UUID:          "fake.fake-namespace",
 					Devices:       &devices,
+					PublicSSHKeys: map[string]string{"0": "somekey"},
 				}
 				buf, err := json.MarshalIndent(metadataStruct, "", "  ")
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
+				Expect(string(buf)).To(Equal(exampleJSONParsed))
+			})
+			It("should match the generated configdrive metadata for hostdev with numaNode", func() {
+				exampleJSONParsed := `{
+  "instance_id": "fake.fake-namespace",
+  "local_hostname": "fake",
+  "uuid": "fake.fake-namespace",
+  "devices": [
+    {
+      "type": "hostdev",
+      "bus": "pci",
+      "address": "0000:65:10:0",
+      "numaNode": 1,
+      "alignedCPUs": [
+        0,
+        1
+      ],
+      "tags": [
+        "testtag1"
+      ]
+    }
+  ],
+  "public_keys": {
+    "0": "somekey"
+  }
+}`
+				devices := []DeviceData{
+					{
+						Type:        HostDevMetadataType,
+						Bus:         api.AddressPCI,
+						Address:     "0000:65:10:0",
+						MAC:         "",
+						NumaNode:    uint32(1),
+						AlignedCPUs: []uint32{0, 1},
+						Tags:        []string{"testtag1"},
+					},
+				}
+
+				metadataStruct := ConfigDriveMetadata{
+					InstanceID:    "fake.fake-namespace",
+					LocalHostname: "fake",
+					UUID:          "fake.fake-namespace",
+					Devices:       &devices,
+					PublicSSHKeys: map[string]string{"0": "somekey"},
+				}
+				buf, err := json.MarshalIndent(metadataStruct, "", "  ")
+				Expect(err).ToNot(HaveOccurred())
+				fmt.Println("expected: ", string(buf))
+				fmt.Println("exmapleJsob: ", exampleJSONParsed)
+
+				Expect(string(buf)).To(Equal(exampleJSONParsed))
+			})
+			It("should match the generated nocloud metadata", func() {
+				exampleJSONParsed := `{
+  "instance-type": "fake.fake-instancetype",
+  "instance-id": "fake.fake-namespace",
+  "local-hostname": "fake"
+}`
+
+				metadataStruct := NoCloudMetadata{
+					InstanceType:  "fake.fake-instancetype",
+					InstanceID:    "fake.fake-namespace",
+					LocalHostname: "fake",
+				}
+				buf, err := json.MarshalIndent(metadataStruct, "", "  ")
+				Expect(err).ToNot(HaveOccurred())
 				Expect(string(buf)).To(Equal(exampleJSONParsed))
 			})
 		})
@@ -173,14 +249,20 @@ var _ = Describe("CloudInit", func() {
 			})
 
 			It("should fail local data generation", func() {
-				namespace := "fake-namespace"
-				domain := "fake-domain"
+				instancetype := "fake-instancetype"
 				userData := "fake\nuser\ndata\n"
 				source := &v1.CloudInitNoCloudSource{
 					UserDataBase64: base64.StdEncoding.EncodeToString([]byte(userData)),
 				}
 				cloudInitData, _ := readCloudInitNoCloudSource(source)
-				err := GenerateLocalData(domain, namespace, cloudInitData)
+
+				vmi := &v1.VirtualMachineInstance{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "fake-domain",
+						Namespace: "fake-namespace",
+					},
+				}
+				err := GenerateLocalData(vmi, instancetype, cloudInitData)
 				Expect(err).To(HaveOccurred())
 				Expect(timedOut).To(BeTrue())
 			})
@@ -193,50 +275,21 @@ var _ = Describe("CloudInit", func() {
 					Expect(err).ToNot(HaveOccurred())
 				})
 			})
-
-			Context("with multiple data dirs and files", func() {
-				It("should list all VirtualMachineInstance's", func() {
-					domains := []string{
-						"fakens1/fakedomain1",
-						"fakens1/fakedomain2",
-						"fakens2/fakedomain1",
-						"fakens2/fakedomain2",
-						"fakens3/fakedomain1",
-						"fakens4/fakedomain1",
-					}
-					msg := "fake content"
-					bytes := []byte(msg)
-
-					for _, dom := range domains {
-						err := os.MkdirAll(fmt.Sprintf("%s/%s/some-other-dir", tmpDir, dom), 0755)
-						Expect(err).ToNot(HaveOccurred())
-						err = ioutil.WriteFile(fmt.Sprintf("%s/%s/some-file", tmpDir, dom), bytes, 0644)
-						Expect(err).ToNot(HaveOccurred())
-					}
-
-					vmis, err := listVmWithLocalData()
-					for _, vmi := range vmis {
-						namespace := precond.MustNotBeEmpty(vmi.GetObjectMeta().GetNamespace())
-						domain := precond.MustNotBeEmpty(vmi.GetObjectMeta().GetName())
-
-						Expect(namespace).To(ContainSubstring("fakens"))
-						Expect(domain).To(ContainSubstring("fakedomain"))
-					}
-
-					Expect(len(vmis)).To(Equal(len(domains)))
-					Expect(err).ToNot(HaveOccurred())
-
-					// verify a vmi from each namespace is present
-				})
-			})
 		})
 
 		Describe("A new VirtualMachineInstance definition", func() {
 			verifyCloudInitData := func(cloudInitData *CloudInitData) {
-				namespace := "fake-namespace"
 				domain := "fake-domain"
+				namespace := "fake-namespace"
+				instancetype := "fake-instancetype"
 
-				err := GenerateLocalData(domain, namespace, cloudInitData)
+				vmi := &v1.VirtualMachineInstance{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      domain,
+						Namespace: namespace,
+					},
+				}
+				err := GenerateLocalData(vmi, instancetype, cloudInitData)
 				Expect(err).ToNot(HaveOccurred())
 
 				// verify iso is created
@@ -257,7 +310,7 @@ var _ = Describe("CloudInit", func() {
 
 				// verify iso and entire dir is deleted
 				_, err = os.Stat(fmt.Sprintf("%s/%s/%s", tmpDir, namespace, domain))
-				if os.IsNotExist(err) {
+				if errors.Is(err, os.ErrNotExist) {
 					err = nil
 				}
 				Expect(err).ToNot(HaveOccurred())
@@ -305,6 +358,14 @@ var _ = Describe("CloudInit", func() {
 					verifyCloudInitNoCloudIso(cloudInitData)
 				})
 
+				It("should succeed to verify networkData if there is no userData", func() {
+					networkData := "fake\nnetwork\ndata\n"
+					cloudInitData := &v1.CloudInitNoCloudSource{
+						NetworkData: networkData,
+					}
+					verifyCloudInitNoCloudIso(cloudInitData)
+				})
+
 				It("should fail to verify bad cloudInitNoCloud UserDataBase64", func() {
 					source := &v1.CloudInitNoCloudSource{
 						UserDataBase64: "#######garbage******",
@@ -322,13 +383,10 @@ var _ = Describe("CloudInit", func() {
 					Expect(err.Error()).Should(Equal("illegal base64 data at input byte 0"))
 				})
 
-				It("should fail to verify networkData without userData", func() {
-					networkData := "FakeNetwork"
-					source := &v1.CloudInitNoCloudSource{
-						NetworkData: networkData,
-					}
+				It("should fail to verify if there is no userData nor networkData", func() {
+					source := &v1.CloudInitNoCloudSource{}
 					_, err := readCloudInitNoCloudSource(source)
-					Expect(err).Should(MatchError("userDataBase64 or userData is required for a cloud-init data source"))
+					Expect(err).Should(MatchError("userDataBase64, userData, networkDataBase64 or networkData is required for a cloud-init data source"))
 				})
 
 				Context("with secretRefs", func() {
@@ -338,6 +396,9 @@ var _ = Describe("CloudInit", func() {
 							VolumeSource: v1.VolumeSource{
 								CloudInitNoCloud: &v1.CloudInitNoCloudSource{
 									UserDataSecretRef: &k8sv1.LocalObjectReference{
+										Name: secret,
+									},
+									NetworkDataSecretRef: &k8sv1.LocalObjectReference{
 										Name: secret,
 									},
 								},
@@ -352,7 +413,20 @@ var _ = Describe("CloudInit", func() {
 							"userdata":    "secret-userdata",
 							"networkdata": "secret-networkdata",
 						})
-						err := ResolveNoCloudSecrets(vmi, tmpDir)
+						err := resolveNoCloudSecrets(vmi, tmpDir)
+						Expect(err).To(Not(HaveOccurred()), "could not resolve secret volume")
+						Expect(testVolume.CloudInitNoCloud.UserData).To(Equal("secret-userdata"))
+						Expect(testVolume.CloudInitNoCloud.NetworkData).To(Equal("secret-networkdata"))
+					})
+
+					It("should resolve camel-case no-cloud data from volume", func() {
+						testVolume := createCloudInitSecretRefVolume("test-volume", "test-secret")
+						vmi := createEmptyVMIWithVolumes([]v1.Volume{*testVolume})
+						fakeVolumeMountDir("test-volume", map[string]string{
+							"userData":    "secret-userdata",
+							"networkData": "secret-networkdata",
+						})
+						err := resolveNoCloudSecrets(vmi, tmpDir)
 						Expect(err).To(Not(HaveOccurred()), "could not resolve secret volume")
 						Expect(testVolume.CloudInitNoCloud.UserData).To(Equal("secret-userdata"))
 						Expect(testVolume.CloudInitNoCloud.NetworkData).To(Equal("secret-networkdata"))
@@ -360,14 +434,14 @@ var _ = Describe("CloudInit", func() {
 
 					It("should resolve empty no-cloud volume and do nothing", func() {
 						vmi := createEmptyVMIWithVolumes([]v1.Volume{})
-						err := ResolveNoCloudSecrets(vmi, tmpDir)
+						err := resolveNoCloudSecrets(vmi, tmpDir)
 						Expect(err).To(Not(HaveOccurred()), "failed to resolve empty volumes")
 					})
 
 					It("should fail if both userdata and network data does not exist", func() {
 						testVolume := createCloudInitSecretRefVolume("test-volume", "test-secret")
 						vmi := createEmptyVMIWithVolumes([]v1.Volume{*testVolume})
-						err := ResolveNoCloudSecrets(vmi, tmpDir)
+						err := resolveNoCloudSecrets(vmi, tmpDir)
 						Expect(err).To(HaveOccurred(), "expected a failure when no sources found")
 						Expect(err.Error()).To(Equal("no cloud-init data-source found at volume: test-volume"))
 					})
@@ -433,15 +507,6 @@ var _ = Describe("CloudInit", func() {
 					Expect(err.Error()).Should(Equal("illegal base64 data at input byte 0"))
 				})
 
-				It("should fail to verify networkData without userData", func() {
-					networkData := "FakeNetwork"
-					source := &v1.CloudInitConfigDriveSource{
-						NetworkData: networkData,
-					}
-					_, err := readCloudInitConfigDriveSource(source)
-					Expect(err).Should(MatchError("userDataBase64 or userData is required for a cloud-init data source"))
-				})
-
 				Context("with secretRefs", func() {
 					createCloudInitConfigDriveVolume := func(name, secret string) *v1.Volume {
 						return &v1.Volume{
@@ -451,6 +516,9 @@ var _ = Describe("CloudInit", func() {
 									UserDataSecretRef: &k8sv1.LocalObjectReference{
 										Name: secret,
 									},
+									NetworkDataSecretRef: &k8sv1.LocalObjectReference{
+										Name: secret,
+									},
 								},
 							},
 						}
@@ -458,33 +526,91 @@ var _ = Describe("CloudInit", func() {
 					It("should resolve config-drive data from volume", func() {
 						testVolume := createCloudInitConfigDriveVolume("test-volume", "test-secret")
 						vmi := createEmptyVMIWithVolumes([]v1.Volume{*testVolume})
+
+						vmi.Spec.AccessCredentials = []v1.AccessCredential{
+							{
+								SSHPublicKey: &v1.SSHPublicKeyAccessCredential{
+									Source: v1.SSHPublicKeyAccessCredentialSource{
+										Secret: &v1.AccessCredentialSecretSource{
+											SecretName: "my-pkey",
+										},
+									},
+									PropagationMethod: v1.SSHPublicKeyAccessCredentialPropagationMethod{
+										ConfigDrive: &v1.ConfigDriveSSHPublicKeyAccessCredentialPropagation{},
+									},
+								},
+							},
+						}
+
 						fakeVolumeMountDir("test-volume", map[string]string{
 							"userdata":    "secret-userdata",
 							"networkdata": "secret-networkdata",
 						})
-						err := ResolveConfigDriveSecrets(vmi, tmpDir)
+
+						fakeVolumeMountDir("my-pkey-access-cred", map[string]string{
+							"somekey":      "ssh-1234",
+							"someotherkey": "ssh-5678",
+						})
+						keys, err := resolveConfigDriveSecrets(vmi, tmpDir)
 						Expect(err).To(Not(HaveOccurred()), "could not resolve secret volume")
 						Expect(testVolume.CloudInitConfigDrive.UserData).To(Equal("secret-userdata"))
 						Expect(testVolume.CloudInitConfigDrive.NetworkData).To(Equal("secret-networkdata"))
+						Expect(keys).To(HaveLen(2))
 					})
 
 					It("should resolve empty config-drive volume and do nothing", func() {
 						vmi := createEmptyVMIWithVolumes([]v1.Volume{})
-						err := ResolveConfigDriveSecrets(vmi, tmpDir)
+						keys, err := resolveConfigDriveSecrets(vmi, tmpDir)
 						Expect(err).To(Not(HaveOccurred()), "failed to resolve empty volumes")
+						Expect(keys).To(BeEmpty())
 					})
 
 					It("should fail if both userdata and network data does not exist", func() {
 						testVolume := createCloudInitConfigDriveVolume("test-volume", "test-secret")
 						vmi := createEmptyVMIWithVolumes([]v1.Volume{*testVolume})
-						err := ResolveConfigDriveSecrets(vmi, tmpDir)
+						keys, err := resolveConfigDriveSecrets(vmi, tmpDir)
 						Expect(err).To(HaveOccurred(), "expected a failure when no sources found")
 						Expect(err.Error()).To(Equal("no cloud-init data-source found at volume: test-volume"))
+						Expect(keys).To(BeEmpty())
 
 					})
-
 				})
 			})
+		})
+	})
+
+	Describe("GenerateLocalData", func() {
+		It("should cleanly run twice", func() {
+			instancetype := "fake-instancetype"
+			userData := "fake\nuser\ndata\n"
+
+			vmi := &v1.VirtualMachineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "fake-domain",
+					Namespace: "fake-namespace",
+				},
+			}
+			source := &v1.CloudInitNoCloudSource{
+				UserDataBase64: base64.StdEncoding.EncodeToString([]byte(userData)),
+			}
+			cloudInitData, err := readCloudInitNoCloudSource(source)
+			Expect(err).NotTo(HaveOccurred())
+			err = GenerateLocalData(vmi, instancetype, cloudInitData)
+			Expect(err).NotTo(HaveOccurred())
+			err = GenerateLocalData(vmi, instancetype, cloudInitData)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Describe("PrepareLocalPath", func() {
+		It("should create the correct directory structure", func() {
+			namespace := "fake-namespace"
+			domain := "fake-domain"
+			expectedPath := filepath.Join(tmpDir, namespace, domain)
+			err := PrepareLocalPath(domain, namespace)
+			Expect(err).ToNot(HaveOccurred())
+			_, err = os.Stat(expectedPath)
+			Expect(err).ToNot(HaveOccurred())
 		})
 	})
 })

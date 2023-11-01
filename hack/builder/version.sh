@@ -1,2 +1,1 @@
-VERSION=30-5.8.1
-ARCHITECTURES="amd64 ppc64le"
+VERSION=$(date +"%y%m%d%H%M")-$(git rev-parse --short HEAD)

@@ -1,5 +1,5 @@
 ---
-apiVersion: kubevirt.io/v1alpha3
+apiVersion: kubevirt.io/v1
 kind: VirtualMachineInstance
 metadata:
   labels:
@@ -15,11 +15,9 @@ spec:
       interfaces:
       - masquerade: {}
         name: default
-    machine:
-      type: ""
     resources:
       requests:
-        memory: 64M
+        memory: 128Mi
   networks:
   - name: default
     pod: {}

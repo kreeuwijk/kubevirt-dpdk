@@ -20,62 +20,84 @@
 package virt_operator
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
-	"reflect"
-	"sync"
+	"sync/atomic"
 	"time"
 
+	"k8s.io/apimachinery/pkg/types"
+
+	"golang.org/x/time/rate"
 	appsv1 "k8s.io/api/apps/v1"
-	batchv1 "k8s.io/api/batch/v1"
 	k8sv1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 
-	v1 "kubevirt.io/client-go/api/v1"
+	v1 "kubevirt.io/api/core/v1"
 	"kubevirt.io/client-go/kubecli"
 	"kubevirt.io/client-go/log"
+
 	"kubevirt.io/kubevirt/pkg/controller"
-	"kubevirt.io/kubevirt/pkg/virt-operator/creation/components"
-	installstrategy "kubevirt.io/kubevirt/pkg/virt-operator/install-strategy"
+	"kubevirt.io/kubevirt/pkg/util/status"
+	"kubevirt.io/kubevirt/pkg/virt-operator/resource/apply"
+	install "kubevirt.io/kubevirt/pkg/virt-operator/resource/generate/install"
 	"kubevirt.io/kubevirt/pkg/virt-operator/util"
 	operatorutil "kubevirt.io/kubevirt/pkg/virt-operator/util"
 )
 
 const (
-	virtOperatorJobAppLabel = "virt-operator-strategy-dumper"
+	virtOperatorJobAppLabel    = "virt-operator-strategy-dumper"
+	installStrategyKeyTemplate = "%s-%d"
+	defaultAddDelay            = 5 * time.Second
+	obsoleteCmName             = "kubevirt-config"
+	obsoleteCMReason           = "ObsoleteConfigMapExists"
 )
+
+type strategyCacheEntry struct {
+	key   string
+	value *install.Strategy
+}
 
 type KubeVirtController struct {
 	clientset            kubecli.KubevirtClient
 	queue                workqueue.RateLimitingInterface
+	delayedQueueAdder    func(key interface{}, queue workqueue.RateLimitingInterface)
 	kubeVirtInformer     cache.SharedIndexInformer
 	recorder             record.EventRecorder
 	stores               util.Stores
 	informers            util.Informers
 	kubeVirtExpectations util.Expectations
-	installStrategyMutex sync.Mutex
-	installStrategyMap   map[string]*installstrategy.InstallStrategy
+	latestStrategy       atomic.Value
 	operatorNamespace    string
-	aggregatorClient     installstrategy.APIServiceInterface
+	aggregatorClient     install.APIServiceInterface
+	statusUpdater        *status.KVStatusUpdater
 }
 
 func NewKubeVirtController(
 	clientset kubecli.KubevirtClient,
-	aggregatorClient installstrategy.APIServiceInterface,
+	aggregatorClient install.APIServiceInterface,
 	informer cache.SharedIndexInformer,
 	recorder record.EventRecorder,
 	stores util.Stores,
 	informers util.Informers,
 	operatorNamespace string,
-) *KubeVirtController {
+) (*KubeVirtController, error) {
+
+	rl := workqueue.NewMaxOfRateLimiter(
+		workqueue.NewItemExponentialFailureRateLimiter(5*time.Second, 1000*time.Second),
+		&workqueue.BucketRateLimiter{Limiter: rate.NewLimiter(rate.Every(5*time.Second), 1)},
+	)
 
 	c := KubeVirtController{
 		clientset:        clientset,
 		aggregatorClient: aggregatorClient,
-		queue:            workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
+		queue:            workqueue.NewNamedRateLimitingQueue(rl, VirtOperator),
 		kubeVirtInformer: informer,
 		recorder:         recorder,
 		stores:           stores,
@@ -94,6 +116,7 @@ func NewKubeVirtController(
 			MutatingWebhook:          controller.NewUIDTrackingControllerExpectations(controller.NewControllerExpectationsWithName("MutatingWebhook")),
 			APIService:               controller.NewUIDTrackingControllerExpectations(controller.NewControllerExpectationsWithName("APIService")),
 			SCC:                      controller.NewUIDTrackingControllerExpectations(controller.NewControllerExpectationsWithName("SCC")),
+			Route:                    controller.NewUIDTrackingControllerExpectations(controller.NewControllerExpectationsWithName("Route")),
 			InstallStrategyConfigMap: controller.NewUIDTrackingControllerExpectations(controller.NewControllerExpectationsWithName("InstallStrategyConfigMap")),
 			InstallStrategyJob:       controller.NewUIDTrackingControllerExpectations(controller.NewControllerExpectationsWithName("Jobs")),
 			PodDisruptionBudget:      controller.NewUIDTrackingControllerExpectations(controller.NewControllerExpectationsWithName("PodDisruptionBudgets")),
@@ -102,17 +125,24 @@ func NewKubeVirtController(
 			Secrets:                  controller.NewUIDTrackingControllerExpectations(controller.NewControllerExpectationsWithName("Secret")),
 			ConfigMap:                controller.NewUIDTrackingControllerExpectations(controller.NewControllerExpectationsWithName("ConfigMap")),
 		},
-		installStrategyMap: make(map[string]*installstrategy.InstallStrategy),
-		operatorNamespace:  operatorNamespace,
+
+		operatorNamespace: operatorNamespace,
+		statusUpdater:     status.NewKubeVirtStatusUpdater(clientset),
+		delayedQueueAdder: func(key interface{}, queue workqueue.RateLimitingInterface) {
+			queue.AddAfter(key, defaultAddDelay)
+		},
 	}
 
-	c.kubeVirtInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := c.kubeVirtInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.addKubeVirt,
 		DeleteFunc: c.deleteKubeVirt,
 		UpdateFunc: c.updateKubeVirt,
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.Namespace.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.Namespace.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, nil)
 		},
@@ -120,7 +150,10 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, nil)
 		},
 	})
-	c.informers.ServiceAccount.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	if err != nil {
+		return nil, err
+	}
+	_, err = c.informers.ServiceAccount.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.ServiceAccount)
 		},
@@ -131,8 +164,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.ServiceAccount)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.ClusterRole.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.ClusterRole.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.ClusterRole)
 		},
@@ -143,8 +179,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.ClusterRole)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.ClusterRoleBinding.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.ClusterRoleBinding.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.ClusterRoleBinding)
 		},
@@ -155,8 +194,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.ClusterRoleBinding)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.Role.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.Role.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.Role)
 		},
@@ -167,8 +209,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.Role)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.RoleBinding.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.RoleBinding.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.RoleBinding)
 		},
@@ -179,8 +224,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.RoleBinding)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.Crd.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.Crd.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.Crd)
 		},
@@ -191,8 +239,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.Crd)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.Service.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.Service.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.Service)
 		},
@@ -203,8 +254,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.Service)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.Deployment.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.Deployment.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.Deployment)
 		},
@@ -215,8 +269,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.Deployment)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.DaemonSet.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.DaemonSet.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.DaemonSet)
 		},
@@ -227,8 +284,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.DaemonSet)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.ValidationWebhook.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.ValidationWebhook.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.ValidationWebhook)
 		},
@@ -239,8 +299,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.ValidationWebhook)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.MutatingWebhook.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.MutatingWebhook.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.MutatingWebhook)
 		},
@@ -251,8 +314,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.MutatingWebhook)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.APIService.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.APIService.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.APIService)
 		},
@@ -263,8 +329,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.APIService)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.SCC.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.SCC.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.sccAddHandler(obj, c.kubeVirtExpectations.SCC)
 		},
@@ -275,8 +344,26 @@ func NewKubeVirtController(
 			c.sccUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.SCC)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.InstallStrategyConfigMap.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.Route.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			c.genericAddHandler(obj, c.kubeVirtExpectations.Route)
+		},
+		DeleteFunc: func(obj interface{}) {
+			c.genericDeleteHandler(obj, c.kubeVirtExpectations.Route)
+		},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.Route)
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = c.informers.InstallStrategyConfigMap.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.InstallStrategyConfigMap)
 		},
@@ -287,8 +374,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.InstallStrategyConfigMap)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.InstallStrategyJob.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.InstallStrategyJob.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.InstallStrategyJob)
 		},
@@ -299,8 +389,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.InstallStrategyJob)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.InfrastructurePod.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.InfrastructurePod.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, nil)
 		},
@@ -311,8 +404,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, nil)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.PodDisruptionBudget.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.PodDisruptionBudget.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.PodDisruptionBudget)
 		},
@@ -323,8 +419,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.PodDisruptionBudget)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.ServiceMonitor.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.ServiceMonitor.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.ServiceMonitor)
 		},
@@ -335,8 +434,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.ServiceMonitor)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.PrometheusRule.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.PrometheusRule.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.PrometheusRule)
 		},
@@ -347,8 +449,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.PrometheusRule)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.Secrets.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.Secrets.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.Secrets)
 		},
@@ -359,8 +464,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.Secrets)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	c.informers.ConfigMap.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = c.informers.ConfigMap.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.genericAddHandler(obj, c.kubeVirtExpectations.ConfigMap)
 		},
@@ -371,8 +479,11 @@ func NewKubeVirtController(
 			c.genericUpdateHandler(oldObj, newObj, c.kubeVirtExpectations.ConfigMap)
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	return &c
+	return &c, nil
 }
 
 func (c *KubeVirtController) getKubeVirtKey() (string, error) {
@@ -430,7 +541,7 @@ func (c *KubeVirtController) genericAddHandler(obj interface{}, expecter *contro
 		if expecter != nil {
 			expecter.CreationObserved(controllerKey)
 		}
-		c.queue.Add(controllerKey)
+		c.delayedQueueAdder(controllerKey, c.queue)
 	}
 }
 
@@ -452,7 +563,7 @@ func (c *KubeVirtController) genericUpdateHandler(old, cur interface{}, expecter
 
 	key, err := c.getKubeVirtKey()
 	if key != "" && err == nil {
-		c.queue.Add(key)
+		c.delayedQueueAdder(key, c.queue)
 	}
 	return
 }
@@ -490,7 +601,7 @@ func (c *KubeVirtController) genericDeleteHandler(obj interface{}, expecter *con
 		if expecter != nil {
 			expecter.DeletionObserved(key, k)
 		}
-		c.queue.Add(key)
+		c.queue.AddAfter(key, defaultAddDelay)
 	}
 }
 
@@ -502,7 +613,7 @@ func (c *KubeVirtController) deleteKubeVirt(obj interface{}) {
 	c.enqueueKubeVirt(obj)
 }
 
-func (c *KubeVirtController) updateKubeVirt(old, curr interface{}) {
+func (c *KubeVirtController) updateKubeVirt(_, curr interface{}) {
 	c.enqueueKubeVirt(curr)
 }
 
@@ -512,8 +623,9 @@ func (c *KubeVirtController) enqueueKubeVirt(obj interface{}) {
 	key, err := controller.KeyFunc(kv)
 	if err != nil {
 		logger.Object(kv).Reason(err).Error("Failed to extract key from KubeVirt.")
+		return
 	}
-	c.queue.Add(key)
+	c.delayedQueueAdder(key, c.queue)
 }
 
 func (c *KubeVirtController) Run(threadiness int, stopCh <-chan struct{}) {
@@ -534,6 +646,7 @@ func (c *KubeVirtController) Run(threadiness int, stopCh <-chan struct{}) {
 	cache.WaitForCacheSync(stopCh, c.informers.DaemonSet.HasSynced)
 	cache.WaitForCacheSync(stopCh, c.informers.ValidationWebhook.HasSynced)
 	cache.WaitForCacheSync(stopCh, c.informers.SCC.HasSynced)
+	cache.WaitForCacheSync(stopCh, c.informers.Route.HasSynced)
 	cache.WaitForCacheSync(stopCh, c.informers.InstallStrategyConfigMap.HasSynced)
 	cache.WaitForCacheSync(stopCh, c.informers.InstallStrategyJob.HasSynced)
 	cache.WaitForCacheSync(stopCh, c.informers.InfrastructurePod.HasSynced)
@@ -601,6 +714,10 @@ func (c *KubeVirtController) execute(key string) error {
 		kv := kv.DeepCopy()
 		controller.SetLatestApiVersionAnnotation(kv)
 		_, err = c.clientset.KubeVirt(kv.ObjectMeta.Namespace).Update(kv)
+		if err != nil {
+			logger.Reason(err).Errorf("Could not update the KubeVirt resource.")
+		}
+
 		return err
 	}
 
@@ -629,20 +746,31 @@ func (c *KubeVirtController) execute(key string) error {
 	if kv.DeletionTimestamp != nil {
 		syncError = c.syncDeletion(kvCopy)
 	} else {
-		syncError = c.syncDeployment(kvCopy)
+		syncError = c.syncInstallation(kvCopy)
 	}
 
 	// set timestamps on conditions if they changed
 	operatorutil.SetConditionTimestamps(kv, kvCopy)
 
 	// If we detect a change on KubeVirt we update it
-	if !reflect.DeepEqual(kv.Status, kvCopy.Status) ||
-		!reflect.DeepEqual(kv.Finalizers, kvCopy.Finalizers) {
+	if !equality.Semantic.DeepEqual(kv.Status, kvCopy.Status) {
+		if err := c.statusUpdater.UpdateStatus(kvCopy); err != nil {
+			logger.Reason(err).Errorf("Could not update the KubeVirt resource status.")
+			return err
+		}
+	}
 
-		_, err := c.clientset.KubeVirt(kv.Namespace).Update(kvCopy)
-
+	// If we detect a change on KubeVirt finalizers we update them
+	// Note: we don't own the metadata section so we need to use Patch() and not Update()
+	if !equality.Semantic.DeepEqual(kv.Finalizers, kvCopy.Finalizers) {
+		finalizersJson, err := json.Marshal(kvCopy.Finalizers)
 		if err != nil {
-			logger.Reason(err).Errorf("Could not update the KubeVirt resource.")
+			return err
+		}
+		patch := fmt.Sprintf(`[{"op": "replace", "path": "/metadata/finalizers", "value": %s}]`, string(finalizersJson))
+		_, err = c.clientset.KubeVirt(kvCopy.ObjectMeta.Namespace).Patch(kvCopy.Name, types.JSONPatchType, []byte(patch), &metav1.PatchOptions{})
+		if err != nil {
+			logger.Reason(err).Errorf("Could not patch the KubeVirt finalizers.")
 			return err
 		}
 	}
@@ -650,173 +778,9 @@ func (c *KubeVirtController) execute(key string) error {
 	return syncError
 }
 
-func (c *KubeVirtController) generateInstallStrategyJob(config *operatorutil.KubeVirtDeploymentConfig) (*batchv1.Job, error) {
-
-	operatorImage := fmt.Sprintf("%s/%s%s%s", config.GetImageRegistry(), config.GetImagePrefix(), "virt-operator", components.AddVersionSeparatorPrefix(config.GetOperatorVersion()))
-	deploymentConfigJson, err := config.GetJson()
-	if err != nil {
-		return nil, err
-	}
-
-	job := &batchv1.Job{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "batch/v1",
-			Kind:       "Job",
-		},
-
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace:    c.operatorNamespace,
-			GenerateName: fmt.Sprintf("kubevirt-%s-job", config.GetDeploymentID()),
-			Labels: map[string]string{
-				v1.AppLabel:             "",
-				v1.ManagedByLabel:       v1.ManagedByLabelOperatorValue,
-				v1.InstallStrategyLabel: "",
-			},
-			Annotations: map[string]string{
-				// Deprecated, keep it for backwards compatibility
-				v1.InstallStrategyVersionAnnotation: config.GetKubeVirtVersion(),
-				// Deprecated, keep it for backwards compatibility
-				v1.InstallStrategyRegistryAnnotation:   config.GetImageRegistry(),
-				v1.InstallStrategyIdentifierAnnotation: config.GetDeploymentID(),
-			},
-		},
-		Spec: batchv1.JobSpec{
-			Template: k8sv1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						v1.AppLabel: virtOperatorJobAppLabel,
-					},
-				},
-				Spec: k8sv1.PodSpec{
-					ServiceAccountName: "kubevirt-operator",
-					RestartPolicy:      k8sv1.RestartPolicyNever,
-					Containers: []k8sv1.Container{
-						{
-							Name:            "install-strategy-upload",
-							Image:           operatorImage,
-							ImagePullPolicy: config.GetImagePullPolicy(),
-							Command: []string{
-								"virt-operator",
-								"--dump-install-strategy",
-							},
-							Env: []k8sv1.EnvVar{
-								{
-									// Deprecated, keep it for backwards compatibility
-									Name:  util.OperatorImageEnvName,
-									Value: operatorImage,
-								},
-								{
-									// Deprecated, keep it for backwards compatibility
-									Name:  util.TargetInstallNamespace,
-									Value: config.GetNamespace(),
-								},
-								{
-									// Deprecated, keep it for backwards compatibility
-									Name:  util.TargetImagePullPolicy,
-									Value: string(config.GetImagePullPolicy()),
-								},
-								{
-									Name:  util.TargetDeploymentConfig,
-									Value: deploymentConfigJson,
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	env := job.Spec.Template.Spec.Containers[0].Env
-	extraEnv := util.NewEnvVarMap(config.GetExtraEnv())
-	job.Spec.Template.Spec.Containers[0].Env = append(env, *extraEnv...)
-
-	return job, nil
-}
-
-func (c *KubeVirtController) garbageCollectInstallStrategyJobs() error {
-	batch := c.clientset.BatchV1()
-	jobs := c.stores.InstallStrategyJobCache.List()
-
-	for _, obj := range jobs {
-		job, ok := obj.(*batchv1.Job)
-		if !ok {
-			continue
-		}
-		if job.Status.CompletionTime == nil {
-			continue
-		}
-
-		propagationPolicy := metav1.DeletePropagationForeground
-		err := batch.Jobs(job.Namespace).Delete(job.Name, &metav1.DeleteOptions{
-			PropagationPolicy: &propagationPolicy,
-		})
-		if err != nil {
-			return err
-		}
-		log.Log.Object(job).Infof("Garbage collected completed install strategy job")
-	}
-
-	return nil
-}
-
-func (c *KubeVirtController) getInstallStrategyFromMap(config *operatorutil.KubeVirtDeploymentConfig) (*installstrategy.InstallStrategy, bool) {
-	c.installStrategyMutex.Lock()
-	defer c.installStrategyMutex.Unlock()
-
-	strategy, ok := c.installStrategyMap[config.GetDeploymentID()]
-	return strategy, ok
-}
-
-func (c *KubeVirtController) cacheInstallStrategyInMap(strategy *installstrategy.InstallStrategy, config *operatorutil.KubeVirtDeploymentConfig) {
-
-	c.installStrategyMutex.Lock()
-	defer c.installStrategyMutex.Unlock()
-	c.installStrategyMap[config.GetDeploymentID()] = strategy
-
-}
-
-func (c *KubeVirtController) deleteAllInstallStrategy() error {
-
-	for _, obj := range c.stores.InstallStrategyConfigMapCache.List() {
-		configMap, ok := obj.(*k8sv1.ConfigMap)
-		if ok && configMap.DeletionTimestamp == nil {
-			err := c.clientset.CoreV1().ConfigMaps(configMap.Namespace).Delete(configMap.Name, &metav1.DeleteOptions{})
-			if err != nil {
-				log.Log.Errorf("Failed to delete configmap %+v: %v", configMap, err)
-				return err
-			}
-		}
-	}
-
-	c.installStrategyMutex.Lock()
-	defer c.installStrategyMutex.Unlock()
-	// reset the local map
-	c.installStrategyMap = make(map[string]*installstrategy.InstallStrategy)
-
-	return nil
-}
-
-func (c *KubeVirtController) getInstallStrategyJob(config *operatorutil.KubeVirtDeploymentConfig) (*batchv1.Job, bool) {
-	objs := c.stores.InstallStrategyJobCache.List()
-	for _, obj := range objs {
-		if job, ok := obj.(*batchv1.Job); ok {
-			if job.Annotations == nil {
-				continue
-			}
-
-			if idAnno, ok := job.Annotations[v1.InstallStrategyIdentifierAnnotation]; ok && idAnno == config.GetDeploymentID() {
-				return job, true
-			}
-
-		}
-	}
-	return nil, false
-}
-
 // Loads install strategies into memory, and generates jobs to
 // create install strategies that don't exist yet.
-func (c *KubeVirtController) loadInstallStrategy(kv *v1.KubeVirt, loadObservedVersion bool) (*installstrategy.InstallStrategy, bool, error) {
+func (c *KubeVirtController) loadInstallStrategy(kv *v1.KubeVirt) (*install.Strategy, bool, error) {
 
 	kvkey, err := controller.KeyFunc(kv)
 	if err != nil {
@@ -824,24 +788,17 @@ func (c *KubeVirtController) loadInstallStrategy(kv *v1.KubeVirt, loadObservedVe
 	}
 
 	config := operatorutil.GetTargetConfigFromKV(kv)
-	if loadObservedVersion {
-		config, err = operatorutil.GetObservedConfigFromKV(kv)
-		if err != nil {
-			return nil, true, err
-		}
-	}
-
 	// 1. see if we already loaded the install strategy
-	strategy, ok := c.getInstallStrategyFromMap(config)
+	strategy, ok := c.getCachedInstallStrategy(config, kv.Generation)
 	if ok {
 		// we already loaded this strategy into memory
 		return strategy, false, nil
 	}
 
 	// 2. look for install strategy config map in cache.
-	strategy, err = installstrategy.LoadInstallStrategyFromCache(c.stores, config)
+	strategy, err = install.LoadInstallStrategyFromCache(c.stores, config)
 	if err == nil {
-		c.cacheInstallStrategyInMap(strategy, config)
+		c.cacheInstallStrategy(strategy, config, kv.Generation)
 		log.Log.Infof("Loaded install strategy for kubevirt version %s into cache", config.GetKubeVirtVersion())
 		return strategy, false, nil
 	}
@@ -883,7 +840,7 @@ func (c *KubeVirtController) loadInstallStrategy(kv *v1.KubeVirt, loadObservedVe
 
 					c.kubeVirtExpectations.InstallStrategyJob.AddExpectedDeletion(kvkey, key)
 					propagationPolicy := metav1.DeletePropagationForeground
-					err = batch.Jobs(cachedJob.Namespace).Delete(cachedJob.Name, &metav1.DeleteOptions{
+					err = batch.Jobs(cachedJob.Namespace).Delete(context.Background(), cachedJob.Name, metav1.DeleteOptions{
 						PropagationPolicy: &propagationPolicy,
 					})
 					if err != nil {
@@ -903,12 +860,12 @@ func (c *KubeVirtController) loadInstallStrategy(kv *v1.KubeVirt, loadObservedVe
 	}
 
 	// 4. execute a job to generate the install strategy for the target version of KubeVirt that's being installed/updated
-	job, err := c.generateInstallStrategyJob(config)
+	job, err := c.generateInstallStrategyJob(kv.Spec.Infra, config)
 	if err != nil {
 		return nil, true, err
 	}
 	c.kubeVirtExpectations.InstallStrategyJob.RaiseExpectations(kvkey, 1, 0)
-	_, err = batch.Jobs(c.operatorNamespace).Create(job)
+	_, err = batch.Jobs(c.operatorNamespace).Create(context.Background(), job, metav1.CreateOptions{})
 	if err != nil {
 		c.kubeVirtExpectations.InstallStrategyJob.LowerExpectations(kvkey, 1, 0)
 		return nil, true, err
@@ -950,10 +907,8 @@ func isUpdating(kv *v1.KubeVirt) bool {
 	return false
 }
 
-func (c *KubeVirtController) syncDeployment(kv *v1.KubeVirt) error {
-	var prevStrategy *installstrategy.InstallStrategy
-	var targetStrategy *installstrategy.InstallStrategy
-	var prevPending bool
+func (c *KubeVirtController) syncInstallation(kv *v1.KubeVirt) error {
+	var targetStrategy *install.Strategy
 	var targetPending bool
 	var err error
 
@@ -974,31 +929,26 @@ func (c *KubeVirtController) syncDeployment(kv *v1.KubeVirt) error {
 	// Record the version we're targeting to install
 	config.SetTargetDeploymentConfig(kv)
 
+	// Set the default architecture
+	config.SetDefaultArchitecture(kv)
+
 	if kv.Status.Phase == "" {
 		kv.Status.Phase = v1.KubeVirtPhaseDeploying
 	}
 
 	if isUpdating(kv) {
 		util.UpdateConditionsUpdating(kv)
-		// If this is an update, we need to retrieve the install strategy of the
-		// previous version. This is only necessary because there are settings
-		// related to SCC privileges that we can't infere without the previous
-		// strategy.
-		prevStrategy, prevPending, err = c.loadInstallStrategy(kv, true)
-		if err != nil {
-			return err
-		}
 	} else {
 		util.UpdateConditionsDeploying(kv)
 	}
 
-	targetStrategy, targetPending, err = c.loadInstallStrategy(kv, false)
+	targetStrategy, targetPending, err = c.loadInstallStrategy(kv)
 	if err != nil {
 		return err
 	}
 
 	// we're waiting on a job to finish and the config map to be created
-	if prevPending || targetPending {
+	if targetPending {
 		return nil
 	}
 
@@ -1012,8 +962,15 @@ func (c *KubeVirtController) syncDeployment(kv *v1.KubeVirt) error {
 		return err
 	}
 
-	// deploy
-	synced, err := installstrategy.SyncAll(c.queue, kv, prevStrategy, targetStrategy, c.stores, c.clientset, c.aggregatorClient, &c.kubeVirtExpectations)
+	reconciler, err := apply.NewReconciler(kv, targetStrategy, c.stores, c.clientset, c.aggregatorClient, &c.kubeVirtExpectations, c.recorder)
+	if err != nil {
+		// deployment failed
+		util.UpdateConditionsFailedError(kv, err)
+		logger.Errorf("Failed to create reconciler: %v", err)
+		return err
+	}
+
+	synced, err := reconciler.Sync(c.queue)
 
 	if err != nil {
 		// deployment failed
@@ -1037,6 +994,7 @@ func (c *KubeVirtController) syncDeployment(kv *v1.KubeVirt) error {
 			logger.Info("All KubeVirt components ready")
 			kv.Status.Phase = v1.KubeVirtPhaseDeployed
 			util.UpdateConditionsAvailable(kv)
+			kv.Status.ObservedGeneration = &kv.ObjectMeta.Generation
 			return nil
 		}
 	}
@@ -1084,7 +1042,7 @@ func (c *KubeVirtController) syncDeletion(kv *v1.KubeVirt) error {
 
 	// If we still have cached objects around, more deletions need to take place.
 	if !c.stores.AllEmpty() {
-		strategy, pending, err := c.loadInstallStrategy(kv, false)
+		_, pending, err := c.loadInstallStrategy(kv)
 		if err != nil {
 			return err
 		}
@@ -1094,7 +1052,7 @@ func (c *KubeVirtController) syncDeletion(kv *v1.KubeVirt) error {
 			return nil
 		}
 
-		err = installstrategy.DeleteAll(kv, strategy, c.stores, c.clientset, c.aggregatorClient, &c.kubeVirtExpectations)
+		err = apply.DeleteAll(kv, c.stores, c.clientset, c.aggregatorClient, &c.kubeVirtExpectations)
 		if err != nil {
 			// deletion failed
 			util.UpdateConditionsDeletionFailed(kv, err)
@@ -1137,6 +1095,27 @@ func (c *KubeVirtController) syncDeletion(kv *v1.KubeVirt) error {
 	return nil
 }
 
-func isKubeVirtActive(kv *v1.KubeVirt) bool {
-	return kv.Status.Phase != v1.KubeVirtPhaseDeleted
+// checkIfConfigMapStillExists This function validates that the obsolete kubevirt-config configMap is no longer exist.
+// The user should not use this configMap to configure KubeVirt, and KubeVirt will ignore it anyway. In case the configMap
+// still exists, this function emit an event to notify the user, and ask them to delete it.
+func (c *KubeVirtController) checkIfConfigMapStillExists(logger *log.FilteredLogger, stopChan <-chan struct{}) {
+	ctx := context.Background()
+	getOpts := metav1.GetOptions{}
+
+	msg := fmt.Sprintf("the %s configMap is still deployed. KubeVirt does not support this configMap and it can be safely removed", obsoleteCmName)
+
+	go wait.Until(func() {
+		logger.V(5).Info("read the kubevirt-config configMap. if exist, emmit an event")
+		cm, err := c.clientset.CoreV1().ConfigMaps(c.operatorNamespace).Get(ctx, obsoleteCmName, getOpts)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				logger.V(5).Info("The obsolete kubevirt-config configMap could not be found. good.")
+			} else {
+				logger.Errorf("can't get the kubevirt-config configMap %v", err)
+			}
+		} else {
+			logger.Warning("The obsolete kubevirt-config configMap still exists. Please remove it.")
+			c.recorder.Eventf(cm, k8sv1.EventTypeWarning, obsoleteCMReason, msg)
+		}
+	}, time.Minute*10, stopChan)
 }
