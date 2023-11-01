@@ -1284,6 +1284,8 @@ type InterfaceMacvtap struct{}
 // InterfacePasst connects to a given network.
 type InterfacePasst struct{}
 
+type InterfaceVhostuser struct{}
+
 // Port represents a port to expose from the virtual machine.
 // Default protocol TCP.
 // The port field is mandatory
