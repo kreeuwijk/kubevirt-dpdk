@@ -34,11 +34,19 @@ import (
 	"kubevirt.io/kubevirt/pkg/network/vmispec"
 )
 
+const virtioInterfaceType = "vhost-user-net"
+
+type cniArguments struct {
+	InterfaceType string `json:"interface-type,omitempty"`
+}
+
 type multusNetworkAnnotation struct {
 	InterfaceName string `json:"interface"`
 	Mac           string `json:"mac,omitempty"`
 	NetworkName   string `json:"name"`
 	Namespace     string `json:"namespace"`
+	// CNIArgs contains additional CNI arguments for the network interface
+	CNIArgs *cniArguments `json:"cni-args,omitempty"`
 }
 
 type multusNetworkAnnotationPool struct {
@@ -71,6 +79,11 @@ func GenerateMultusCNIAnnotationFromNameScheme(namespace string, interfaces []v1
 	for _, network := range networks {
 		if vmispec.IsSecondaryMultusNetwork(network) {
 			podInterfaceName := networkNameScheme[network.Name]
+			multusIface := vmispec.LookupInterfaceByName(interfaces, network.Name)
+			if multusIface != nil && multusIface.Vhostuser != nil {
+				podInterfaceName = namescheme.OrdinalPodInterfaceName(network.Name, networks)
+			}
+			log.Log.Infof("Annotation is populated with pod net interface name: %s, network Name: %s", podInterfaceName, network.Name)
 			multusNetworkAnnotationPool.add(
 				newMultusAnnotationData(namespace, interfaces, network, podInterfaceName))
 		}
@@ -89,12 +102,18 @@ func newMultusAnnotationData(namespace string, interfaces []v1.Interface, networ
 	if multusIface != nil {
 		multusIfaceMac = multusIface.MacAddress
 	}
-	return multusNetworkAnnotation{
+	multusAnnotation := multusNetworkAnnotation{
 		InterfaceName: podInterfaceName,
 		Mac:           multusIfaceMac,
 		Namespace:     namespace,
 		NetworkName:   networkName,
 	}
+	if multusIface != nil && multusIface.Vhostuser != nil {
+		multusAnnotation.CNIArgs = &cniArguments{
+			InterfaceType: virtioInterfaceType,
+		}
+	}
+	return multusAnnotation
 }
 
 func NonDefaultMultusNetworksIndexedByIfaceName(pod *k8sv1.Pod) map[string]networkv1.NetworkStatus {
