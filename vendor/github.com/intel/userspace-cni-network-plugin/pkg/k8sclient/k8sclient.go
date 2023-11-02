@@ -15,6 +15,7 @@
 package k8sclient
 
 import (
+	"context"
 	"net"
 	"os"
 
@@ -39,7 +40,6 @@ type k8sArgs struct {
 	K8S_POD_NAMESPACE          cnitypes.UnmarshallableString
 	K8S_POD_INFRA_CONTAINER_ID cnitypes.UnmarshallableString
 }
-
 
 func getK8sArgs(args *skel.CmdArgs) (*k8sArgs, error) {
 	k8sArgs := &k8sArgs{}
@@ -92,8 +92,8 @@ func getK8sClient(kubeClient kubernetes.Interface, kubeConfig string) (kubernete
 }
 
 func GetPod(args *skel.CmdArgs,
-			kubeClient kubernetes.Interface,
-			kubeConfig string) (*v1.Pod, kubernetes.Interface, error) {
+	kubeClient kubernetes.Interface,
+	kubeConfig string) (*v1.Pod, kubernetes.Interface, error) {
 	var err error
 
 	logging.Verbosef("GetPod: ENTER - %v, %v, %v", args, kubeClient, kubeConfig)
@@ -119,7 +119,7 @@ func GetPod(args *skel.CmdArgs,
 
 	// Get the pod info. If cannot get it, we use cached delegates
 	//pod, err := kubeClient.GetPod(string(k8sArgs.K8S_POD_NAMESPACE), string(k8sArgs.K8S_POD_NAME))
-	pod, err := kubeClient.CoreV1().Pods(string(k8sArgs.K8S_POD_NAMESPACE)).Get(string(k8sArgs.K8S_POD_NAME), metav1.GetOptions{})
+	pod, err := kubeClient.CoreV1().Pods(string(k8sArgs.K8S_POD_NAMESPACE)).Get(context.TODO(), string(k8sArgs.K8S_POD_NAME), metav1.GetOptions{})
 
 	if err != nil {
 		logging.Debugf("GetPod: Err in loading K8s cluster default network from pod annotation: %v, use cached delegates", err)
@@ -144,13 +144,13 @@ func WritePodAnnotation(kubeClient kubernetes.Interface, pod *v1.Pod) (*v1.Pod, 
 	if resultErr := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		if err != nil {
 			// Re-get the pod unless it's the first attempt to update
-			pod, err = kubeClient.CoreV1().Pods(pod.Namespace).Get(pod.Name, metav1.GetOptions{})
+			pod, err = kubeClient.CoreV1().Pods(pod.Namespace).Get(context.TODO(), pod.Name, metav1.GetOptions{})
 			if err != nil {
 				return err
 			}
 		}
 
-		pod, err = kubeClient.CoreV1().Pods(pod.Namespace).UpdateStatus(pod)
+		pod, err = kubeClient.CoreV1().Pods(pod.Namespace).UpdateStatus(context.TODO(), pod, metav1.UpdateOptions{})
 		return err
 	}); resultErr != nil {
 		return nil, logging.Errorf("status update failed for pod %s/%s: %v", pod.Namespace, pod.Name, resultErr)
