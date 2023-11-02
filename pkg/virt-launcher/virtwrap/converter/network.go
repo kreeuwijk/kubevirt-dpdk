@@ -69,9 +69,9 @@ func CreateDomainInterfaces(vmi *v1.VirtualMachineInstance, domain *api.Domain, 
 			numberOfSources++
 		}
 		if numberOfSources == 0 {
-			return fmt.Errorf("fail network %s must have a network type", network.Name)
+			return nil, fmt.Errorf("fail network %s must have a network type", network.Name)
 		} else if numberOfSources > 1 {
-			return fmt.Errorf("fail network %s must have only one network type", network.Name)
+			return nil, fmt.Errorf("fail network %s must have only one network type", network.Name)
 		}
 	}
 
@@ -159,7 +159,7 @@ func CreateDomainInterfaces(vmi *v1.VirtualMachineInstance, domain *api.Domain, 
 			vhostPath, vhostMode, err := getVhostuserInfo(interfaceName, c)
 			if err != nil {
 				log.Log.Errorf("Failed to get vhostuser interface info: %v", err)
-				return err
+				return nil, err
 			}
 			vhostPathParts := strings.Split(vhostPath, "/")
 			vhostDevice := vhostPathParts[len(vhostPathParts)-1]
