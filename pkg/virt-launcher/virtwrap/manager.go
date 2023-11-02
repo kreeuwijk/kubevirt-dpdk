@@ -829,21 +829,6 @@ func getPodNetworkInterfaceList(ifaces []v1.Interface) (*netutiltype.InterfaceRe
 			return netutil.GetInterfaces()
 		}
 	}
-
-	for index, element := range addrs {
-		addrs[index] = strings.TrimSpace(element)
-	}
-	return true
-}
-
-// Get the interfaces list from the annotiations file of the pod
-// This info is required for vhostuser interface
-func getPodNetworkInterfaceList(ifaces []v1.Interface) (*netutiltype.InterfaceResponse, error) {
-	for _, iface := range ifaces {
-		if iface.Vhostuser != nil {
-			return netutil.GetInterfaces()
-		}
-	}
 	// When there is no vhostuser interface, pod interface list not required
 	return nil, nil
 }
