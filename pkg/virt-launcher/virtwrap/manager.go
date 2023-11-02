@@ -856,14 +856,13 @@ func (l *LibvirtDomainManager) generateConverterContext(vmi *v1.VirtualMachineIn
 	// Check if PVC volumes are block volumes
 	isBlockPVCMap := make(map[string]bool)
 	isBlockDVMap := make(map[string]bool)
-	diskInfo := make(map[string]*containerdisk.DiskInfo)
-	for i, volume := range vmi.Spec.Volumes {
-		if volume.VolumeSource.PersistentVolumeClaim != nil {
-			isBlockPVC, err := isBlockDeviceVolume(volume.Name)
-			if err != nil {
-				logger.Reason(err).Errorf("failed to detect volume mode for Volume %v and PVC %v.",
-					volume.Name, volume.VolumeSource.PersistentVolumeClaim.ClaimName)
-				return nil, err
+	for _, volume := range vmi.Spec.Volumes {
+		if volume.VolumeSource.PersistentVolumeClaim != nil || volume.VolumeSource.Ephemeral != nil {
+			isBlockPVC := false
+			if _, ok := hotplugVolumes[volume.Name]; ok {
+				isBlockPVC = isHotplugBlockDeviceVolume(volume.Name)
+			} else {
+				isBlockPVC, _ = isBlockDeviceVolume(volume.Name)
 			}
 			isBlockPVCMap[volume.Name] = isBlockPVC
 		} else if volume.VolumeSource.DataVolume != nil {
