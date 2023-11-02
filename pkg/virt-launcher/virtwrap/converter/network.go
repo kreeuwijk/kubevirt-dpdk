@@ -51,6 +51,29 @@ func CreateDomainInterfaces(vmi *v1.VirtualMachineInstance, domain *api.Domain, 
 	nonAbsentNets := netvmispec.FilterNetworksByInterfaces(vmi.Spec.Networks, nonAbsentIfaces)
 
 	networks := indexNetworksByName(nonAbsentNets)
+	cniNetworks := map[string]int{}
+	multusNetworkIndex := 1
+	for _, network := range vmi.Spec.Networks {
+		numberOfSources := 0
+		if network.Pod != nil {
+			numberOfSources++
+		}
+		if network.Multus != nil {
+			if network.Multus.Default {
+				// default network is eth0
+				cniNetworks[network.Name] = 0
+			} else {
+				cniNetworks[network.Name] = multusNetworkIndex
+				multusNetworkIndex++
+			}
+			numberOfSources++
+		}
+		if numberOfSources == 0 {
+			return fmt.Errorf("fail network %s must have a network type", network.Name)
+		} else if numberOfSources > 1 {
+			return fmt.Errorf("fail network %s must have only one network type", network.Name)
+		}
+	}
 
 	for i, iface := range nonAbsentIfaces {
 		net, isExist := networks[iface.Name]
@@ -140,16 +163,16 @@ func CreateDomainInterfaces(vmi *v1.VirtualMachineInstance, domain *api.Domain, 
 			}
 			vhostPathParts := strings.Split(vhostPath, "/")
 			vhostDevice := vhostPathParts[len(vhostPathParts)-1]
-			domainIface.Source = InterfaceSource{
+			domainIface.Source = api.InterfaceSource{
 				Type: "unix",
 				Path: vhostPath,
 				Mode: vhostMode,
 			}
-			domainIface.Target = &InterfaceTarget{
+			domainIface.Target = &api.InterfaceTarget{
 				Device: vhostDevice,
 			}
 			var vhostuserQueueSize uint32 = 1024
-			domainIface.Driver = &InterfaceDriver{
+			domainIface.Driver = &api.InterfaceDriver{
 				RxQueueSize: &vhostuserQueueSize,
 				TxQueueSize: &vhostuserQueueSize,
 			}
