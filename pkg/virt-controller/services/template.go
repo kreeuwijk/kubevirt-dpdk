@@ -72,7 +72,7 @@ const VhostNetDevice = "devices.kubevirt.io/vhost-net"
 const SevDevice = "devices.kubevirt.io/sev"
 const VhostVsockDevice = "devices.kubevirt.io/vhost-vsock"
 const PrDevice = "devices.kubevirt.io/pr-helper"
-const VhostuserSocketDir = "/var/lib/cni/usrspcni/"
+const VhostuserSocketDir = "/var/lib/cni/usrcni/"
 const PodNetInfoDefault = "/etc/podnetinfo"
 
 const debugLogs = "debugLogs"
