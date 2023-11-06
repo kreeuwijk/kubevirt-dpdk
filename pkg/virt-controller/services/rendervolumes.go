@@ -468,11 +468,16 @@ func withVhostuserVolume(VhostuserSocketDir string) VolumeRendererOption {
 	return func(renderer *VolumeRenderer) error {
 		renderer.podVolumes = append(renderer.podVolumes, k8sv1.Volume{
 			Name: "shared-dir",
+			// VolumeSource: k8sv1.VolumeSource{
+			// 	EmptyDir: &k8sv1.EmptyDirVolumeSource{
+			// 		Medium: k8sv1.StorageMediumDefault,
+			// 	},
+			// },
 			VolumeSource: k8sv1.VolumeSource{
-				EmptyDir: &k8sv1.EmptyDirVolumeSource{
-					Medium: k8sv1.StorageMediumDefault,
+				HostPath: &k8sv1.HostPathVolumeSource{
+					Path: filepath.Dir("/var/run/openvswitch"),
+					Type: &hostPathType,
 				},
-			},
 		})
 		renderer.podVolumeMounts = append(renderer.podVolumeMounts, k8sv1.VolumeMount{
 			Name:      "shared-dir",
