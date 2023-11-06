@@ -476,7 +476,7 @@ func withVhostuserVolume(VhostuserSocketDir string) VolumeRendererOption {
 			VolumeSource: k8sv1.VolumeSource{
 				HostPath: &k8sv1.HostPathVolumeSource{
 					Path: filepath.Dir("/var/run/openvswitch"),
-					Type: &hostPathType,
+					Type: k8sv1.HostPathDirectory,
 				},
 			},
 		})
