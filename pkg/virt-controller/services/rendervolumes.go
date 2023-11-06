@@ -476,6 +476,7 @@ func withVhostuserVolume(VhostuserSocketDir string) VolumeRendererOption {
 			VolumeSource: k8sv1.VolumeSource{
 				HostPath: &k8sv1.HostPathVolumeSource{
 					Path: "/tmp/vhost_sockets",
+					Type: "Directory"
 				},
 			},
 		})
