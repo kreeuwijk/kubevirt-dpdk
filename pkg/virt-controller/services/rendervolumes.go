@@ -471,6 +471,10 @@ func withVhostuserVolume(VhostuserSocketDir string) VolumeRendererOption {
 		// 		Medium: k8sv1.StorageMediumDefault,
 		// 	},
 		// },
+		renderer.podVolumeMounts = append(renderer.podVolumeMounts, k8sv1.VolumeMount{
+			Name:      "shared-dir",
+			MountPath: filepath.Join(VhostuserSocketDir) + "/",
+		})
 		renderer.podVolumes = append(renderer.podVolumes, k8sv1.Volume{
 			Name: "shared-dir",
 			VolumeSource: k8sv1.VolumeSource{
@@ -479,10 +483,6 @@ func withVhostuserVolume(VhostuserSocketDir string) VolumeRendererOption {
 					Type: k8sv1.HostPathDirectory,
 				},
 			},
-		})
-		renderer.podVolumeMounts = append(renderer.podVolumeMounts, k8sv1.VolumeMount{
-			Name:      "shared-dir",
-			MountPath: filepath.Join(VhostuserSocketDir) + "/",
 		})
 		return nil
 	}
