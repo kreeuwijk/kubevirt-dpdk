@@ -465,6 +465,7 @@ func withSRIOVPciMapAnnotation() VolumeRendererOption {
 
 func withVhostuserVolume(VhostuserSocketDir string) VolumeRendererOption {
 	// "shared-dir" volume name will be used by userspace cni to place the vhostuser socket file
+	hostPathType := k8sv1.HostPathDirectory
 	return func(renderer *VolumeRenderer) error {
 		// VolumeSource: k8sv1.VolumeSource{
 		// 	EmptyDir: &k8sv1.EmptyDirVolumeSource{
@@ -480,7 +481,7 @@ func withVhostuserVolume(VhostuserSocketDir string) VolumeRendererOption {
 			VolumeSource: k8sv1.VolumeSource{
 				HostPath: &k8sv1.HostPathVolumeSource{
 					Path: "/tmp/vhost_sockets",
-					Type: *k8sv1.HostPathDirectory,
+					Type: &hostPathType,
 				},
 			},
 		})
