@@ -478,6 +478,7 @@ func withVhostuserVolume(VhostuserSocketDir string) VolumeRendererOption {
 					Path: filepath.Dir("/var/run/openvswitch"),
 					Type: &hostPathType,
 				},
+			},
 		})
 		renderer.podVolumeMounts = append(renderer.podVolumeMounts, k8sv1.VolumeMount{
 			Name:      "shared-dir",
