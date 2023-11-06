@@ -24,7 +24,7 @@ import (
 	"kubevirt.io/kubevirt/pkg/virtiofs"
 )
 
-const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 type VolumeRendererOption func(renderer *VolumeRenderer) error
 
