@@ -2,9 +2,7 @@ package services
 
 import (
 	"fmt"
-	"math/rand"
 	"path/filepath"
-	"time"
 
 	backendstorage "kubevirt.io/kubevirt/pkg/storage/backend-storage"
 
@@ -468,15 +466,10 @@ func withSRIOVPciMapAnnotation() VolumeRendererOption {
 }
 
 func withVhostuserVolume(VhostuserSocketDir string) VolumeRendererOption {
-	rand.Seed(time.Now().UnixNano())
+	//rand.Seed(time.Now().UnixNano())
 	// "shared-dir" volume name will be used by userspace cni to place the vhostuser socket file
-	hostPathType := k8sv1.HostPathDirectoryOrCreate
+	//hostPathType := k8sv1.HostPathDirectoryOrCreate
 	return func(renderer *VolumeRenderer) error {
-		// VolumeSource: k8sv1.VolumeSource{
-		// 	EmptyDir: &k8sv1.EmptyDirVolumeSource{
-		// 		Medium: k8sv1.StorageMediumDefault,
-		// 	},
-		// },
 		renderer.podVolumeMounts = append(renderer.podVolumeMounts, k8sv1.VolumeMount{
 			Name:      "shared-dir",
 			MountPath: filepath.Join(VhostuserSocketDir) + "/",
@@ -484,23 +477,28 @@ func withVhostuserVolume(VhostuserSocketDir string) VolumeRendererOption {
 		renderer.podVolumes = append(renderer.podVolumes, k8sv1.Volume{
 			Name: "shared-dir",
 			VolumeSource: k8sv1.VolumeSource{
-				HostPath: &k8sv1.HostPathVolumeSource{
-					Path: "/var/lib/vhost_dpdk/" + RandStringBytes(10),
-					Type: &hostPathType,
+				EmptyDir: &k8sv1.EmptyDirVolumeSource{
+					Medium: k8sv1.StorageMediumDefault,
 				},
 			},
+			// VolumeSource: k8sv1.VolumeSource{
+			// 	HostPath: &k8sv1.HostPathVolumeSource{
+			// 		Path: "/var/lib/vhost_dpdk/" + RandStringBytes(10),
+			// 		Type: &hostPathType,
+			// 	},
+			// },
 		})
 		return nil
 	}
 }
 
-func RandStringBytes(n int) string {
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
-	}
-	return string(b)
-}
+// func RandStringBytes(n int) string {
+// 	b := make([]byte, n)
+// 	for i := range b {
+// 		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+// 	}
+// 	return string(b)
+// }
 
 func withPodInfoVolume(PodNetInfoDefault string) VolumeRendererOption {
 	// userspace cni will set the vhostuser socket details in annotations, app-netutil helper
