@@ -22,8 +22,6 @@ import (
 	"kubevirt.io/kubevirt/pkg/virtiofs"
 )
 
-const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
 type VolumeRendererOption func(renderer *VolumeRenderer) error
 
 type VolumeRenderer struct {
@@ -466,14 +464,8 @@ func withSRIOVPciMapAnnotation() VolumeRendererOption {
 }
 
 func withVhostuserVolume(VhostuserSocketDir string) VolumeRendererOption {
-	//rand.Seed(time.Now().UnixNano())
 	// "shared-dir" volume name will be used by userspace cni to place the vhostuser socket file
-	//hostPathType := k8sv1.HostPathDirectoryOrCreate
 	return func(renderer *VolumeRenderer) error {
-		renderer.podVolumeMounts = append(renderer.podVolumeMounts, k8sv1.VolumeMount{
-			Name:      "shared-dir",
-			MountPath: filepath.Join(VhostuserSocketDir) + "/",
-		})
 		renderer.podVolumes = append(renderer.podVolumes, k8sv1.Volume{
 			Name: "shared-dir",
 			VolumeSource: k8sv1.VolumeSource{
@@ -481,24 +473,14 @@ func withVhostuserVolume(VhostuserSocketDir string) VolumeRendererOption {
 					Medium: k8sv1.StorageMediumDefault,
 				},
 			},
-			// VolumeSource: k8sv1.VolumeSource{
-			// 	HostPath: &k8sv1.HostPathVolumeSource{
-			// 		Path: "/var/lib/vhost_dpdk/" + RandStringBytes(10),
-			// 		Type: &hostPathType,
-			// 	},
-			// },
+		})
+		renderer.podVolumeMounts = append(renderer.podVolumeMounts, k8sv1.VolumeMount{
+			Name:      "shared-dir",
+			MountPath: filepath.Join(VhostuserSocketDir) + "/",
 		})
 		return nil
 	}
 }
-
-// func RandStringBytes(n int) string {
-// 	b := make([]byte, n)
-// 	for i := range b {
-// 		b[i] = letterBytes[rand.Intn(len(letterBytes))]
-// 	}
-// 	return string(b)
-// }
 
 func withPodInfoVolume(PodNetInfoDefault string) VolumeRendererOption {
 	// userspace cni will set the vhostuser socket details in annotations, app-netutil helper
